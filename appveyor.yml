@@ -10,4 +10,4 @@ install:
   - make -v
 build: false
 test_script:
-  - cargo test --verbose
+  - RUST_BACKTRACE=1 cargo test --verbose
