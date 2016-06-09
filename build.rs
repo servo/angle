@@ -13,7 +13,7 @@ fn find_make() -> String {
 }
 
 fn main() {
-    assert!(Command::new(env::var("MAKE").unwrap_or_else(|_| find_make()))
+    assert!(Command::new(env::var("MAKE").unwrap_or_else(find_make))
         .args(&["-R", "-f", "makefile.cargo", &format!("-j{}", env::var("NUM_JOBS").unwrap())])
         .status()
         .unwrap()
