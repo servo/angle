@@ -6,8 +6,14 @@ use std::process::Command;
 use std::env;
 
 
+fn find_make() -> String {
+    Command::new("gmake").status()
+                         .map(|_| "gmake".to_string())
+                         .unwrap_or("make".to_string())
+}
+
 fn main() {
-    assert!(Command::new("make")
+    assert!(Command::new(env::var("MAKE").ok().unwrap_or_else(find_make))
         .args(&["-R", "-f", "makefile.cargo", &format!("-j{}", env::var("NUM_JOBS").unwrap())])
         .status()
         .unwrap()
