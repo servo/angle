@@ -1,6 +1,6 @@
 [package]
 name = "angle"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["ecoal95 <ecoal95@gmail.com>"]
 description = "GLSL parsing and validation library based on ANGLE"
 license = "MIT"
@@ -8,4 +8,7 @@ license = "MIT"
 build = "build.rs"
 
 [dependencies]
-libc = "*"
+libc = "0.2"
+
+[build-dependencies]
+cmake = "0.1"

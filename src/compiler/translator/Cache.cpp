@@ -62,8 +62,57 @@ TCache::TypeKey::TypeKey(TBasicType basicType,
 
 TCache *TCache::sCache = nullptr;
 
+namespace {
+// I can't believe I'm writing this
+struct CacheMutex {
+#if defined(ANGLE_PLATFORM_WINDOWS)
+    CRITICAL_SECTION mCS;
+    CacheMutex() {
+        ::InitializeCriticalSection(&mCS);
+    }
+    ~CacheMutex() {
+        ::DeleteCriticalSection(&mCS);
+    }
+    void Lock() {
+        EnterCriticalSection(&mCS);
+    }
+    void Unlock() {
+        LeaveCriticalSection(&mCS);
+    }
+
+#elif defined(ANGLE_PLATFORM_POSIX)
+    pthread_mutex_t mMutex;
+    CacheMutex() {
+        pthread_mutex_init(&mMutex, nullptr);
+    }
+    void Lock() {
+        pthread_mutex_lock(&mMutex);
+    }
+    void Unlock() {
+        pthread_mutex_unlock(&mMutex);
+    }
+
+#else
+#error Need to know how to work with mutexes on this platform
+#endif
+};
+
+CacheMutex sCacheMutex;
+
+struct AutoEnterCacheMutex {
+    AutoEnterCacheMutex() {
+        sCacheMutex.Lock();
+    }
+    ~AutoEnterCacheMutex() {
+        sCacheMutex.Unlock();
+    }
+};
+
+}
+
 void TCache::initialize()
 {
+    AutoEnterCacheMutex lock;
     if (sCache == nullptr)
     {
         sCache = new TCache();
@@ -72,6 +121,7 @@ void TCache::initialize()
 
 void TCache::destroy()
 {
+    AutoEnterCacheMutex lock;
     SafeDelete(sCache);
 }
 
@@ -81,6 +131,7 @@ const TType *TCache::getType(TBasicType basicType,
                              unsigned char primarySize,
                              unsigned char secondarySize)
 {
+    AutoEnterCacheMutex lock;
     TypeKey key(basicType, precision, qualifier,
                 primarySize, secondarySize);
     auto it = sCache->mTypes.find(key);

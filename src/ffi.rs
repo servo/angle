@@ -92,8 +92,6 @@ pub struct ShBuiltInResources {
 
 pub type ShHandle = *mut c_void;
 
-#[link(name = "glslang", kind = "static")]
-#[link(name = "stdc++")]
 extern {
     pub fn GLSLangInitialize() -> c_int;
     pub fn GLSLangFinalize() -> c_int;
