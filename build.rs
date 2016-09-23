@@ -10,7 +10,9 @@ fn main() {
     println!("cargo:rustc-link-search=native={}", dst.display());
     println!("cargo:rustc-link-lib=static=angle");
     let target = env::var("TARGET").unwrap();
-    if !target.contains("windows-msvc") {
+    if target.contains("apple") {
+        println!("cargo:rustc-link-lib=c++");
+    } else if !target.contains("windows-msvc") {
         println!("cargo:rustc-link-lib=stdc++");
     }
 }
