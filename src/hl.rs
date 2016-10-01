@@ -180,7 +180,7 @@ impl ShaderValidator {
                       SH_LIMIT_CALL_STACK_DEPTH;
 
         // Todo(Mortimer): Add SH_TIMING_RESTRICTIONS to options when the implementations gets better
-        // Right now SH_TIMING_RESTRICTIONS it's experimental 
+        // Right now SH_TIMING_RESTRICTIONS is experimental 
         // and doesn't support user callable functions in shaders
 
         try!(self.compile(strings, options));
