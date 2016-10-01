@@ -174,11 +174,14 @@ impl ShaderValidator {
 
         let options = SH_VALIDATE | SH_OBJECT_CODE |
                       SH_EMULATE_BUILT_IN_FUNCTIONS | // To workaround drivers
-                      SH_TIMING_RESTRICTIONS |
                       SH_CLAMP_INDIRECT_ARRAY_BOUNDS |
                       SH_INIT_GL_POSITION |
                       SH_ENFORCE_PACKING_RESTRICTIONS |
                       SH_LIMIT_CALL_STACK_DEPTH;
+
+        // Todo(Mortimer): Add SH_TIMING_RESTRICTIONS to options when the implementations gets better
+        // Right now SH_TIMING_RESTRICTIONS it's experimental 
+        // and doesn't support user callable functions in shaders
 
         try!(self.compile(strings, options));
         Ok(self.object_code())
