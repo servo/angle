@@ -1,0 +1,11 @@
+[package]
+name = "angle"
+version = "0.1.0"
+authors = ["ecoal95 <ecoal95@gmail.com>"]
+description = "GLSL parsing and validation library based on ANGLE"
+license = "MIT"
+
+build = "build.rs"
+
+[dependencies]
+libc = "*"
