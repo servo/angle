@@ -1,4 +1,4 @@
-use libc::*;
+use std::os::raw::{c_char, c_int, c_uint, c_void};
 
 // ShShaderSpec
 pub const SH_GLES2_SPEC: c_int = 0x8B40;
@@ -98,7 +98,7 @@ extern {
     pub fn GLSLangInitBuiltInResources(res: *mut ShBuiltInResources);
     pub fn GLSLangConstructCompiler(_type: c_uint, spec: c_int, output: c_int, resources_ptr: *const ShBuiltInResources) -> ShHandle;
     pub fn GLSLangDestructCompiler(handle: ShHandle);
-    pub fn GLSLangCompile(handle: ShHandle, strings: *const *const c_char, num_strings: size_t, compile_options: c_int) -> c_int;
+    pub fn GLSLangCompile(handle: ShHandle, strings: *const *const c_char, num_strings: usize, compile_options: c_int) -> c_int;
     pub fn GLSLangClearResults(handle: ShHandle);
     pub fn GLSLangGetShaderVersion(handle: ShHandle) -> c_int;
     pub fn GLSLangGetShaderOutputType(handle: ShHandle) -> c_int;
