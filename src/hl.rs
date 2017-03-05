@@ -1,10 +1,10 @@
 use super::ffi::*;
 
-use libc;
+use std::default;
 use std::ffi::CStr;
 use std::ffi::CString;
 use std::mem;
-use std::default;
+use std::os::raw::c_char;
 
 pub fn initialize() -> Result<(), &'static str> {
     if unsafe { GLSLangInitialize() } == 0 {
@@ -148,8 +148,8 @@ impl ShaderValidator {
         let cptrs: Vec<_> = cstrings.iter().map(|s| s.as_ptr()).collect();
 
         if unsafe { GLSLangCompile(self.handle,
-                                   cptrs.as_ptr() as *const *const libc::c_char,
-                                   cstrings.len() as libc::size_t,
+                                   cptrs.as_ptr() as *const *const c_char,
+                                   cstrings.len(),
                                    options) } == 0 {
             return Err("Couldn't compile shader")
         }
