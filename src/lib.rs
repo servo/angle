@@ -62,8 +62,7 @@ mod tests {
         assert!(result == EXPECTED);
     }
 
-    // TODO(emilio): run this test. We can't actually run it because travis machines can't output
-    // essl.
+    #[test]
     fn test_translation_essl() {
         const SHADER: &'static str = "void main() {
     gl_FragColor = vec4(0, 1, 0, 1);  // green
