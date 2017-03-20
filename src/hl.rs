@@ -1,4 +1,7 @@
 use super::ffi::*;
+use super::ffi::ShCompileOptions::*;
+use super::ffi::ShShaderOutput::*;
+use super::ffi::ShShaderSpec::*;
 
 use std::default;
 use std::ffi::CStr;
@@ -37,13 +40,13 @@ pub enum ShaderSpec {
 impl AsAngleEnum for ShaderSpec {
     #[inline]
     fn as_angle_enum(&self) -> i32 {
-        match *self {
+        (match *self {
             ShaderSpec::Gles2 => SH_GLES2_SPEC,
             ShaderSpec::WebGL => SH_WEBGL_SPEC,
             ShaderSpec::Gles3 => SH_GLES3_SPEC,
             ShaderSpec::WebGL2 => SH_WEBGL2_SPEC,
             ShaderSpec::Css => SH_CSS_SHADERS_SPEC,
-        }
+        }) as i32
     }
 }
 
@@ -67,11 +70,11 @@ pub enum Output {
 impl AsAngleEnum for Output {
     #[inline]
     fn as_angle_enum(&self) -> i32 {
-        match *self {
+        (match *self {
             Output::Essl => SH_ESSL_OUTPUT,
-            Output::Glsl => SH_GLSL_OUTPUT,
+            Output::Glsl => SH_GLSL_COMPATIBILITY_OUTPUT,
             Output::GlslCompat => SH_GLSL_COMPATIBILITY_OUTPUT,
-            Output::GlslCore => SH_GLSL_CORE_OUTPUT,
+            Output::GlslCore => SH_GLSL_130_OUTPUT,
             Output::Glsl130 => SH_GLSL_130_OUTPUT,
             Output::Glsl140 => SH_GLSL_140_OUTPUT,
             Output::Glsl150Core => SH_GLSL_150_CORE_OUTPUT,
@@ -82,7 +85,7 @@ impl AsAngleEnum for Output {
             Output::Glsl430Core => SH_GLSL_430_CORE_OUTPUT,
             Output::Glsl440Core => SH_GLSL_440_CORE_OUTPUT,
             Output::Glsl450Core => SH_GLSL_450_CORE_OUTPUT,
-        }
+        }) as i32
     }
 }
 
@@ -172,12 +175,12 @@ impl ShaderValidator {
 
     pub fn compile_and_translate(&self, strings: &[&str]) -> Result<String, &'static str> {
 
-        let options = SH_VALIDATE | SH_OBJECT_CODE |
-                      SH_EMULATE_BUILT_IN_FUNCTIONS | // To workaround drivers
-                      SH_CLAMP_INDIRECT_ARRAY_BOUNDS |
-                      SH_INIT_GL_POSITION |
-                      SH_ENFORCE_PACKING_RESTRICTIONS |
-                      SH_LIMIT_CALL_STACK_DEPTH;
+        let options = SH_VALIDATE as i32 | SH_OBJECT_CODE as i32|
+                      SH_EMULATE_BUILT_IN_FUNCTIONS as i32 | // To workaround drivers
+                      SH_CLAMP_INDIRECT_ARRAY_BOUNDS as i32 |
+                      SH_INIT_GL_POSITION as i32 |
+                      SH_ENFORCE_PACKING_RESTRICTIONS as i32 |
+                      SH_LIMIT_CALL_STACK_DEPTH as i32;
 
         // Todo(Mortimer): Add SH_TIMING_RESTRICTIONS to options when the implementations gets better
         // Right now SH_TIMING_RESTRICTIONS is experimental 
