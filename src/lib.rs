@@ -1,4 +1,25 @@
-pub mod ffi;
+#[allow(dead_code)]
+#[allow(non_upper_case_globals)]
+#[allow(non_camel_case_types)]
+#[allow(non_snake_case)]
+pub mod ffi {
+    include!(concat!(env!("OUT_DIR"), "/bindings.rs"));  
+
+    use std::os::raw::{c_char, c_int, c_uint};
+    extern {
+        pub fn GLSLangInitialize() -> c_int;
+        pub fn GLSLangFinalize() -> c_int;
+        pub fn GLSLangInitBuiltInResources(res: *mut ShBuiltInResources);
+        pub fn GLSLangConstructCompiler(_type: c_uint, spec: c_int, output: c_int, resources_ptr: *const ShBuiltInResources) -> ShHandle;
+        pub fn GLSLangDestructCompiler(handle: ShHandle);
+        pub fn GLSLangCompile(handle: ShHandle, strings: *const *const c_char, num_strings: usize, compile_options: c_int) -> c_int;
+        pub fn GLSLangClearResults(handle: ShHandle);
+        pub fn GLSLangGetShaderVersion(handle: ShHandle) -> c_int;
+        pub fn GLSLangGetShaderOutputType(handle: ShHandle) -> c_int;
+        pub fn GLSLangGetObjectCode(handle: ShHandle) -> *const c_char;
+        pub fn GLSLangGetInfoLog(handle: ShHandle) -> *const c_char;
+    } 
+}
 pub mod hl;
 
 #[cfg(test)]
