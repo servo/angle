@@ -24,7 +24,7 @@ class HandleAllocator final : angle::NonCopyable
   public:
     // Maximum handle = MAX_UINT-1
     HandleAllocator();
-    // Specify maximum handle value
+    // Specify maximum handle value. Used for testing.
     HandleAllocator(GLuint maximumHandleValue);
 
     ~HandleAllocator();
@@ -34,6 +34,7 @@ class HandleAllocator final : angle::NonCopyable
     GLuint allocate();
     void release(GLuint handle);
     void reserve(GLuint handle);
+    void reset();
 
   private:
     GLuint mBaseValue;
@@ -41,6 +42,7 @@ class HandleAllocator final : angle::NonCopyable
     typedef std::vector<GLuint> HandleList;
     HandleList mFreeValues;
 
+    // Represents an inclusive range [begin, end]
     struct HandleRange
     {
         HandleRange(GLuint beginIn, GLuint endIn) : begin(beginIn), end(endIn) {}

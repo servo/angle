@@ -14,17 +14,17 @@
 #include "tests/angle_unittests_utils.h"
 
 using ::testing::_;
+using ::testing::get;
 using ::testing::Return;
 using ::testing::SetArgumentPointee;
 
 namespace
 {
 
-class MockFactory : public rx::NullFactory
+ACTION(CreateMockTransformFeedbackImpl)
 {
-  public:
-    MOCK_METHOD0(createTransformFeedback, rx::TransformFeedbackImpl *());
-};
+    return new rx::MockTransformFeedbackImpl(arg0);
+}
 
 class TransformFeedbackTest : public testing::Test
 {
@@ -33,24 +33,25 @@ class TransformFeedbackTest : public testing::Test
 
     void SetUp() override
     {
-        mImpl = new rx::MockTransformFeedbackImpl;
-        EXPECT_CALL(mMockFactory, createTransformFeedback())
-            .WillOnce(Return(mImpl))
+        EXPECT_CALL(mMockFactory, createTransformFeedback(_))
+            .WillOnce(CreateMockTransformFeedbackImpl())
             .RetiresOnSaturation();
 
         // Set a reasonable number of tf attributes
         mCaps.maxTransformFeedbackSeparateAttributes = 8;
 
-        EXPECT_CALL(*mImpl, destructor());
         mFeedback = new gl::TransformFeedback(&mMockFactory, 1, mCaps);
         mFeedback->addRef();
+
+        mImpl = rx::GetImplAs<rx::MockTransformFeedbackImpl>(mFeedback);
+        EXPECT_CALL(*mImpl, destructor());
     }
 
     void TearDown() override
     {
         if (mFeedback)
         {
-            mFeedback->release();
+            mFeedback->release(nullptr);
         }
 
         // Only needed because the mock is leaked if bugs are present,
@@ -59,7 +60,7 @@ class TransformFeedbackTest : public testing::Test
         testing::Mock::VerifyAndClear(mImpl);
     }
 
-    MockFactory mMockFactory;
+    rx::MockGLFactory mMockFactory;
     rx::MockTransformFeedbackImpl* mImpl;
     gl::TransformFeedback* mFeedback;
     gl::Caps mCaps;
@@ -71,11 +72,11 @@ TEST_F(TransformFeedbackTest, SideEffectsOfStartAndStop)
 
     EXPECT_FALSE(mFeedback->isActive());
     EXPECT_CALL(*mImpl, begin(GL_TRIANGLES));
-    mFeedback->begin(GL_TRIANGLES, nullptr);
+    mFeedback->begin(nullptr, GL_TRIANGLES, nullptr);
     EXPECT_TRUE(mFeedback->isActive());
     EXPECT_EQ(static_cast<GLenum>(GL_TRIANGLES), mFeedback->getPrimitiveMode());
     EXPECT_CALL(*mImpl, end());
-    mFeedback->end();
+    mFeedback->end(nullptr);
     EXPECT_FALSE(mFeedback->isActive());
 }
 
@@ -85,7 +86,7 @@ TEST_F(TransformFeedbackTest, SideEffectsOfPauseAndResume)
 
     EXPECT_FALSE(mFeedback->isActive());
     EXPECT_CALL(*mImpl, begin(GL_TRIANGLES));
-    mFeedback->begin(GL_TRIANGLES, nullptr);
+    mFeedback->begin(nullptr, GL_TRIANGLES, nullptr);
     EXPECT_FALSE(mFeedback->isPaused());
     EXPECT_CALL(*mImpl, pause());
     mFeedback->pause();
@@ -94,25 +95,32 @@ TEST_F(TransformFeedbackTest, SideEffectsOfPauseAndResume)
     mFeedback->resume();
     EXPECT_FALSE(mFeedback->isPaused());
     EXPECT_CALL(*mImpl, end());
-    mFeedback->end();
+    mFeedback->end(nullptr);
 }
 
 TEST_F(TransformFeedbackTest, BufferBinding)
 {
     rx::MockBufferImpl *bufferImpl = new rx::MockBufferImpl;
-    gl::Buffer *buffer = new gl::Buffer(bufferImpl, 1);
     EXPECT_CALL(*bufferImpl, destructor()).Times(1).RetiresOnSaturation();
+
+    rx::MockGLFactory mockGLFactory;
+    EXPECT_CALL(mockGLFactory, createBuffer(_))
+        .Times(1)
+        .WillOnce(Return(bufferImpl))
+        .RetiresOnSaturation();
+
+    gl::Buffer *buffer = new gl::Buffer(&mockGLFactory, 1);
 
     static const size_t bindIndex = 0;
 
     EXPECT_EQ(mFeedback->getIndexedBufferCount(), mCaps.maxTransformFeedbackSeparateAttributes);
 
     EXPECT_CALL(*mImpl, bindGenericBuffer(_));
-    mFeedback->bindGenericBuffer(buffer);
+    mFeedback->bindGenericBuffer(nullptr, buffer);
     EXPECT_EQ(mFeedback->getGenericBuffer().get(), buffer);
 
     EXPECT_CALL(*mImpl, bindIndexedBuffer(_, _));
-    mFeedback->bindIndexedBuffer(bindIndex, buffer, 0, 1);
+    mFeedback->bindIndexedBuffer(nullptr, bindIndex, buffer, 0, 1);
     for (size_t i = 0; i < mFeedback->getIndexedBufferCount(); i++)
     {
         if (i == bindIndex)
@@ -129,7 +137,7 @@ TEST_F(TransformFeedbackTest, BufferBinding)
     const size_t releaseCount = mFeedback->getRefCount();
     for (size_t count = 0; count < releaseCount; ++count)
     {
-        mFeedback->release();
+        mFeedback->release(nullptr);
     }
 
     mFeedback = nullptr;

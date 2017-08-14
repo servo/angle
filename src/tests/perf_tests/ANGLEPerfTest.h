@@ -27,9 +27,14 @@
 
 class Event;
 
-#ifndef ASSERT_GL_NO_ERROR
+#if !defined(ASSERT_GL_NO_ERROR)
 #define ASSERT_GL_NO_ERROR() ASSERT_EQ(static_cast<GLenum>(GL_NO_ERROR), glGetError())
-#endif
+#endif  // !defined(ASSERT_GL_NO_ERROR)
+
+#if !defined(ASSERT_GLENUM_EQ)
+#define ASSERT_GLENUM_EQ(expected, actual) \
+    ASSERT_EQ(static_cast<GLenum>(expected), static_cast<GLenum>(actual))
+#endif  // !defined(ASSERT_GLENUM_EQ)
 
 class ANGLEPerfTest : public testing::Test, angle::NonCopyable
 {
@@ -55,15 +60,16 @@ class ANGLEPerfTest : public testing::Test, angle::NonCopyable
     // Call if the test step was aborted and the test should stop running.
     void abortTest() { mRunning = false; }
 
-    int getNumStepsPerformed() const { return mNumStepsPerformed; }
+    unsigned int getNumStepsPerformed() const { return mNumStepsPerformed; }
 
     std::string mName;
     std::string mSuffix;
     Timer *mTimer;
     double mRunTimeSeconds;
+    bool mSkipTest;
 
   private:
-    int mNumStepsPerformed;
+    unsigned int mNumStepsPerformed;
     bool mRunning;
 };
 
@@ -79,6 +85,9 @@ class ANGLERenderTest : public ANGLEPerfTest
 {
   public:
     ANGLERenderTest(const std::string &name, const RenderTestParams &testParams);
+    ANGLERenderTest(const std::string &name,
+                    const RenderTestParams &testParams,
+                    const std::vector<std::string> &extensionPrerequisites);
     ~ANGLERenderTest();
 
     virtual void initializeBenchmark() { }
@@ -100,8 +109,11 @@ class ANGLERenderTest : public ANGLEPerfTest
     void step() override;
     void finishTest() override;
 
+    bool areExtensionPrerequisitesFulfilled() const;
+
     EGLWindow *mEGLWindow;
     OSWindow *mOSWindow;
+    std::vector<std::string> mExtensionPrerequisites;
 };
 
 #endif // PERF_TESTS_ANGLE_PERF_TEST_H_

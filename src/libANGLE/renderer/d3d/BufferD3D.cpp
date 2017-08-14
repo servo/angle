@@ -19,8 +19,8 @@ namespace rx
 
 unsigned int BufferD3D::mNextSerial = 1;
 
-BufferD3D::BufferD3D(BufferFactoryD3D *factory)
-    : BufferImpl(),
+BufferD3D::BufferD3D(const gl::BufferState &state, BufferFactoryD3D *factory)
+    : BufferImpl(state),
       mFactory(factory),
       mStaticIndexBuffer(nullptr),
       mStaticBufferCacheTotalSize(0),
@@ -90,7 +90,8 @@ StaticIndexBufferInterface *BufferD3D::getStaticIndexBuffer()
     return mStaticIndexBuffer;
 }
 
-StaticVertexBufferInterface *BufferD3D::getStaticVertexBuffer(const gl::VertexAttribute &attribute)
+StaticVertexBufferInterface *BufferD3D::getStaticVertexBuffer(const gl::VertexAttribute &attribute,
+                                                              const gl::VertexBinding &binding)
 {
     if (mStaticVertexBuffers.empty())
     {
@@ -111,7 +112,7 @@ StaticVertexBufferInterface *BufferD3D::getStaticVertexBuffer(const gl::VertexAt
     // If there is a cached static buffer that already contains the attribute, then return it
     for (const auto &staticBuffer : mStaticVertexBuffers)
     {
-        if (staticBuffer->matchesAttribute(attribute))
+        if (staticBuffer->matchesAttribute(attribute, binding))
         {
             return staticBuffer.get();
         }
@@ -120,7 +121,7 @@ StaticVertexBufferInterface *BufferD3D::getStaticVertexBuffer(const gl::VertexAt
     }
 
     // Cache size limiting: Clean-up threshold is four times the base buffer size, with a minimum.
-    ASSERT(IsUnsignedMultiplicationSafe(getSize(), static_cast<size_t>(4u)));
+    ASSERT(getSize() < std::numeric_limits<size_t>::max() / 4u);
     size_t sizeThreshold = std::max(getSize() * 4u, static_cast<size_t>(0x1000u));
 
     // If we're past the threshold, clear the buffer cache. Note that this will release buffers
@@ -134,7 +135,7 @@ StaticVertexBufferInterface *BufferD3D::getStaticVertexBuffer(const gl::VertexAt
 
     // At this point, we must create a new static buffer for the attribute data.
     auto newStaticBuffer = new StaticVertexBufferInterface(mFactory);
-    newStaticBuffer->setAttribute(attribute);
+    newStaticBuffer->setAttribute(attribute, binding);
     mStaticVertexBuffers.push_back(std::unique_ptr<StaticVertexBufferInterface>(newStaticBuffer));
     return newStaticBuffer;
 }
@@ -179,14 +180,10 @@ gl::Error BufferD3D::getIndexRange(GLenum type,
                                    gl::IndexRange *outRange)
 {
     const uint8_t *data = nullptr;
-    gl::Error error = getData(&data);
-    if (error.isError())
-    {
-        return error;
-    }
+    ANGLE_TRY(getData(&data));
 
     *outRange = gl::ComputeIndexRange(type, data + offset, count, primitiveRestartEnabled);
-    return gl::Error(GL_NO_ERROR);
+    return gl::NoError();
 }
 
 }  // namespace rx

@@ -5,6 +5,9 @@
 //
 
 #include "test_utils/ANGLETest.h"
+#include "test_utils/gl_raii.h"
+
+#include "random_utils.h"
 
 #include <stdint.h>
 
@@ -94,15 +97,15 @@ TEST_P(BufferDataTest, NULLData)
     for (int i = 0; i < numIterations; ++i)
     {
         GLsizei bufferSize = sizeof(GLfloat) * (i + 1);
-        glBufferData(GL_ARRAY_BUFFER, bufferSize, NULL, GL_STATIC_DRAW);
+        glBufferData(GL_ARRAY_BUFFER, bufferSize, nullptr, GL_STATIC_DRAW);
         EXPECT_GL_NO_ERROR();
 
         for (int j = 0; j < bufferSize; j++)
         {
             for (int k = 0; k < bufferSize - j; k++)
             {
-                glBufferSubData(GL_ARRAY_BUFFER, k, j, NULL);
-                EXPECT_GL_NO_ERROR();
+                glBufferSubData(GL_ARRAY_BUFFER, k, j, nullptr);
+                ASSERT_GL_NO_ERROR();
             }
         }
     }
@@ -126,10 +129,10 @@ TEST_P(BufferDataTest, ZeroNonNULLData)
 TEST_P(BufferDataTest, NULLResolvedData)
 {
     glBindBuffer(GL_ARRAY_BUFFER, mBuffer);
-    glBufferData(GL_ARRAY_BUFFER, 128, NULL, GL_DYNAMIC_DRAW);
+    glBufferData(GL_ARRAY_BUFFER, 128, nullptr, GL_DYNAMIC_DRAW);
 
     glUseProgram(mProgram);
-    glVertexAttribPointer(mAttribLocation, 1, GL_FLOAT, GL_FALSE, 4, NULL);
+    glVertexAttribPointer(mAttribLocation, 1, GL_FLOAT, GL_FALSE, 4, nullptr);
     glEnableVertexAttribArray(mAttribLocation);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
 
@@ -145,18 +148,18 @@ TEST_P(BufferDataTest, DISABLED_HugeSetDataShouldNotCrash)
 
     GLsizei allocSize = std::numeric_limits<GLsizei>::max() >> 2;
 
-    uint8_t *data = NULL;
-    while (data == NULL && allocSize >= 4)
+    uint8_t *data = nullptr;
+    while (data == nullptr && allocSize >= 4)
     {
         data = new (std::nothrow) uint8_t[allocSize];
 
-        if (data == NULL)
+        if (data == nullptr)
         {
             allocSize >>= 1;
         }
     }
 
-    ASSERT_NE(static_cast<uint8_t*>(NULL), data);
+    ASSERT_NE(static_cast<uint8_t *>(nullptr), data);
     memset(data, 0, allocSize);
 
     float * fValue = reinterpret_cast<float*>(data);
@@ -176,11 +179,11 @@ TEST_P(BufferDataTest, DISABLED_HugeSetDataShouldNotCrash)
         // DISABLED because it takes a long time, but left for posterity
 
         //glUseProgram(mProgram);
-        //glVertexAttribPointer(mAttribLocation, 1, GL_FLOAT, GL_FALSE, 4, NULL);
-        //glEnableVertexAttribArray(mAttribLocation);
-        //glBindBuffer(GL_ARRAY_BUFFER, 0);
-        //drawQuad(mProgram, "position", 0.5f);
-        //swapBuffers();
+        // glVertexAttribPointer(mAttribLocation, 1, GL_FLOAT, GL_FALSE, 4, nullptr);
+        // glEnableVertexAttribArray(mAttribLocation);
+        // glBindBuffer(GL_ARRAY_BUFFER, 0);
+        // drawQuad(mProgram, "position", 0.5f);
+        // swapBuffers();
 
         //// Draw operations can also generate out-of-memory, which is in-spec
         //error = glGetError();
@@ -326,7 +329,7 @@ TEST_P(IndexedBufferCopyTest, IndexRangeBug)
     glBufferData(GL_ARRAY_BUFFER, sizeof(char) * 6, vertexData, GL_STATIC_DRAW);
 
     glUseProgram(mProgram);
-    glVertexAttribPointer(mAttribLocation, 3, GL_UNSIGNED_BYTE, GL_TRUE, 3, NULL);
+    glVertexAttribPointer(mAttribLocation, 3, GL_UNSIGNED_BYTE, GL_TRUE, 3, nullptr);
     glEnableVertexAttribArray(mAttribLocation);
 
     ASSERT_GL_NO_ERROR();
@@ -338,7 +341,7 @@ TEST_P(IndexedBufferCopyTest, IndexRangeBug)
 
     ASSERT_GL_NO_ERROR();
 
-    glDrawElements(GL_POINTS, 1, GL_UNSIGNED_INT, NULL);
+    glDrawElements(GL_POINTS, 1, GL_UNSIGNED_INT, nullptr);
 
     EXPECT_GL_NO_ERROR();
     EXPECT_PIXEL_EQ(0, 0, 255, 0, 0, 255);
@@ -358,7 +361,7 @@ TEST_P(IndexedBufferCopyTest, IndexRangeBug)
     unsigned char newData[] = { 0, 255, 0 };
     glBufferSubData(GL_ARRAY_BUFFER, 3, 3, newData);
 
-    glDrawElements(GL_POINTS, 1, GL_UNSIGNED_INT, NULL);
+    glDrawElements(GL_POINTS, 1, GL_UNSIGNED_INT, nullptr);
 
     EXPECT_GL_NO_ERROR();
     EXPECT_PIXEL_EQ(0, 0, 0, 255, 0, 255);
@@ -384,7 +387,7 @@ TEST_P(BufferDataTestES3, BufferResizing)
     // To trigger the bug, the buffer need to be big enough because some hardware copy buffers
     // by chunks of pages instead of the minimum number of bytes neeeded.
     const size_t numBytes = 4096*4;
-    glBufferData(GL_ARRAY_BUFFER, numBytes, NULL, GL_STATIC_DRAW);
+    glBufferData(GL_ARRAY_BUFFER, numBytes, nullptr, GL_STATIC_DRAW);
 
     // Copy the original data to the buffer
     uint8_t srcBytes[numBytes];
@@ -432,6 +435,54 @@ TEST_P(BufferDataTestES3, BufferResizing)
     EXPECT_GL_NO_ERROR();
 }
 
+// Verify OES_mapbuffer is present if EXT_map_buffer_range is.
+TEST_P(BufferDataTest, ExtensionDependency)
+{
+    if (extensionEnabled("GL_EXT_map_buffer_range"))
+    {
+        ASSERT_TRUE(extensionEnabled("GL_OES_mapbuffer"));
+    }
+}
+
+// Test mapping with the OES extension.
+TEST_P(BufferDataTest, MapBufferOES)
+{
+    if (!extensionEnabled("GL_EXT_map_buffer_range"))
+    {
+        // Needed for test validation.
+        return;
+    }
+
+    std::vector<uint8_t> data(1024);
+    FillVectorWithRandomUBytes(&data);
+
+    GLBuffer buffer;
+    glBindBuffer(GL_ARRAY_BUFFER, buffer.get());
+    glBufferData(GL_ARRAY_BUFFER, data.size(), nullptr, GL_STATIC_DRAW);
+
+    // Validate that other map flags don't work.
+    void *badMapPtr = glMapBufferOES(GL_ARRAY_BUFFER, GL_MAP_READ_BIT);
+    EXPECT_EQ(nullptr, badMapPtr);
+    EXPECT_GL_ERROR(GL_INVALID_ENUM);
+
+    // Map and write.
+    void *mapPtr = glMapBufferOES(GL_ARRAY_BUFFER, GL_WRITE_ONLY_OES);
+    ASSERT_NE(nullptr, mapPtr);
+    ASSERT_GL_NO_ERROR();
+    memcpy(mapPtr, data.data(), data.size());
+    glUnmapBufferOES(GL_ARRAY_BUFFER);
+
+    // Validate data with EXT_map_buffer_range
+    void *readMapPtr = glMapBufferRangeEXT(GL_ARRAY_BUFFER, 0, data.size(), GL_MAP_READ_BIT_EXT);
+    ASSERT_NE(nullptr, readMapPtr);
+    ASSERT_GL_NO_ERROR();
+    std::vector<uint8_t> actualData(data.size());
+    memcpy(actualData.data(), readMapPtr, data.size());
+    glUnmapBufferOES(GL_ARRAY_BUFFER);
+
+    EXPECT_EQ(data, actualData);
+}
+
 // Use this to select which configurations (e.g. which renderer, which GLES major version) these tests should be run against.
 ANGLE_INSTANTIATE_TEST(BufferDataTest, ES2_D3D9(), ES2_D3D11(), ES2_OPENGL(), ES2_OPENGLES());
 ANGLE_INSTANTIATE_TEST(BufferDataTestES3, ES3_D3D11(), ES3_OPENGL(), ES3_OPENGLES());
@@ -447,24 +498,8 @@ class BufferDataOverflowTest : public ANGLETest
 {
   protected:
     BufferDataOverflowTest()
-        : mProgram(0)
     {
     }
-
-    ~BufferDataOverflowTest()
-    {
-        if (!mBuffers.empty())
-        {
-            glDeleteBuffers(static_cast<GLsizei>(mBuffers.size()), &mBuffers[0]);
-        }
-        if (mProgram != 0u)
-        {
-            glDeleteProgram(mProgram);
-        }
-    }
-
-    std::vector<GLuint> mBuffers;
-    GLuint mProgram;
 };
 
 // See description above.
@@ -472,9 +507,9 @@ TEST_P(BufferDataOverflowTest, VertexBufferIntegerOverflow)
 {
     // These values are special, to trigger the rounding bug.
     unsigned int numItems = 0x7FFFFFE;
-    GLsizei bufferCnt = 8;
+    constexpr GLsizei bufferCnt = 8;
 
-    mBuffers.resize(bufferCnt);
+    std::vector<GLBuffer> buffers(bufferCnt);
 
     std::stringstream vertexShaderStr;
 
@@ -502,30 +537,27 @@ TEST_P(BufferDataOverflowTest, VertexBufferIntegerOverflow)
         "  gl_FragColor = vec4(v_attrib, 0, 0, 1);\n"
         "}";
 
-    mProgram = CompileProgram(vertexShaderStr.str(), fragmentShader);
-    ASSERT_NE(0u, mProgram);
-    glUseProgram(mProgram);
-
-    glGenBuffers(bufferCnt, &mBuffers[0]);
+    ANGLE_GL_PROGRAM(program, vertexShaderStr.str(), fragmentShader);
+    glUseProgram(program.get());
 
     std::vector<GLfloat> data(numItems, 1.0f);
 
     for (GLsizei bufferIndex = 0; bufferIndex < bufferCnt; ++bufferIndex)
     {
-        glBindBuffer(GL_ARRAY_BUFFER, mBuffers[bufferIndex]);
+        glBindBuffer(GL_ARRAY_BUFFER, buffers[bufferIndex].get());
         glBufferData(GL_ARRAY_BUFFER, numItems * sizeof(float), &data[0], GL_DYNAMIC_DRAW);
 
         std::stringstream attribNameStr;
         attribNameStr << "attrib" << bufferIndex;
 
-        GLint attribLocation = glGetAttribLocation(mProgram, attribNameStr.str().c_str());
+        GLint attribLocation = glGetAttribLocation(program.get(), attribNameStr.str().c_str());
         ASSERT_NE(-1, attribLocation);
 
         glVertexAttribPointer(attribLocation, 1, GL_FLOAT, GL_FALSE, 4, nullptr);
         glEnableVertexAttribArray(attribLocation);
     }
 
-    GLint positionLocation = glGetAttribLocation(mProgram, "position");
+    GLint positionLocation = glGetAttribLocation(program.get(), "position");
     ASSERT_NE(-1, positionLocation);
     glDisableVertexAttribArray(positionLocation);
     glVertexAttrib2f(positionLocation, 1.0f, 1.0f);
@@ -533,6 +565,28 @@ TEST_P(BufferDataOverflowTest, VertexBufferIntegerOverflow)
     EXPECT_GL_NO_ERROR();
     glDrawArrays(GL_TRIANGLES, 0, numItems);
     EXPECT_GL_ERROR(GL_OUT_OF_MEMORY);
+}
+
+// Tests a security bug in our CopyBufferSubData validation (integer overflow).
+TEST_P(BufferDataOverflowTest, CopySubDataValidation)
+{
+    GLBuffer readBuffer, writeBuffer;
+
+    glBindBuffer(GL_COPY_READ_BUFFER, readBuffer.get());
+    glBindBuffer(GL_COPY_WRITE_BUFFER, writeBuffer.get());
+
+    constexpr int bufSize = 100;
+
+    glBufferData(GL_COPY_READ_BUFFER, bufSize, nullptr, GL_STATIC_DRAW);
+    glBufferData(GL_COPY_WRITE_BUFFER, bufSize, nullptr, GL_STATIC_DRAW);
+
+    GLintptr big = std::numeric_limits<GLintptr>::max() - bufSize + 90;
+
+    glCopyBufferSubData(GL_COPY_READ_BUFFER, GL_COPY_WRITE_BUFFER, big, 0, 50);
+    EXPECT_GL_ERROR(GL_INVALID_VALUE);
+
+    glCopyBufferSubData(GL_COPY_READ_BUFFER, GL_COPY_WRITE_BUFFER, 0, big, 50);
+    EXPECT_GL_ERROR(GL_INVALID_VALUE);
 }
 
 ANGLE_INSTANTIATE_TEST(BufferDataOverflowTest, ES3_D3D11());

@@ -7,29 +7,23 @@
 
 #include "compiler/translator/ValidateMaxParameters.h"
 
-ValidateMaxParameters::ValidateMaxParameters(unsigned int maxParameters)
-    : TIntermTraverser(true, false, false), mMaxParameters(maxParameters), mValid(true)
-{
-}
+#include "compiler/translator/IntermNode.h"
 
-bool ValidateMaxParameters::visitAggregate(Visit visit, TIntermAggregate *node)
+namespace sh
 {
-    if (!mValid)
+
+bool ValidateMaxParameters(TIntermBlock *root, unsigned int maxParameters)
+{
+    for (TIntermNode *node : *root->getSequence())
     {
-        return false;
+        TIntermFunctionDefinition *definition = node->getAsFunctionDefinition();
+        if (definition != nullptr &&
+            definition->getFunctionPrototype()->getSequence()->size() > maxParameters)
+        {
+            return false;
+        }
     }
-
-    if (node->getOp() == EOpParameters && node->getSequence()->size() > mMaxParameters)
-    {
-        mValid = false;
-    }
-
-    return mValid;
+    return true;
 }
 
-bool ValidateMaxParameters::validate(TIntermNode *root, unsigned int maxParameters)
-{
-    ValidateMaxParameters argsTraverser(maxParameters);
-    root->traverse(&argsTraverser);
-    return argsTraverser.mValid;
-}
+}  // namespace sh

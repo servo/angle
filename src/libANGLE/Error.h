@@ -9,11 +9,66 @@
 #ifndef LIBANGLE_ERROR_H_
 #define LIBANGLE_ERROR_H_
 
-#include "angle_gl.h"
 #include <EGL/egl.h>
+#include <EGL/eglext.h>
+#include "angle_gl.h"
+#include "common/angleutils.h"
 
-#include <string>
 #include <memory>
+#include <ostream>
+#include <string>
+
+namespace angle
+{
+template <typename ErrorT, typename ResultT, typename ErrorBaseT, ErrorBaseT NoErrorVal>
+class ErrorOrResultBase
+{
+  public:
+    ErrorOrResultBase(const ErrorT &error) : mError(error) {}
+    ErrorOrResultBase(ErrorT &&error) : mError(std::move(error)) {}
+
+    ErrorOrResultBase(ResultT &&result) : mError(NoErrorVal), mResult(std::forward<ResultT>(result))
+    {
+    }
+
+    ErrorOrResultBase(const ResultT &result) : mError(NoErrorVal), mResult(result) {}
+
+    bool isError() const { return mError.isError(); }
+    const ErrorT &getError() const { return mError; }
+    ResultT &&getResult() { return std::move(mResult); }
+
+  private:
+    ErrorT mError;
+    ResultT mResult;
+};
+
+template <typename ErrorT, typename ErrorBaseT, ErrorBaseT NoErrorVal, typename CodeT, CodeT EnumT>
+class ErrorStreamBase : angle::NonCopyable
+{
+  public:
+    ErrorStreamBase() : mID(EnumT) {}
+    ErrorStreamBase(GLuint id) : mID(id) {}
+
+    template <typename T>
+    ErrorStreamBase &operator<<(T value)
+    {
+        mErrorStream << value;
+        return *this;
+    }
+
+    operator ErrorT() { return ErrorT(EnumT, mID, mErrorStream.str()); }
+
+    template <typename ResultT>
+    operator ErrorOrResultBase<ErrorT, ResultT, ErrorBaseT, NoErrorVal>()
+    {
+        return static_cast<ErrorT>(*this);
+    }
+
+  private:
+    GLuint mID;
+    std::ostringstream mErrorStream;
+};
+}  // namespace angle
 
 namespace gl
 {
@@ -22,8 +77,8 @@ class Error final
 {
   public:
     explicit inline Error(GLenum errorCode);
-    Error(GLenum errorCode, const char *msg, ...);
-    Error(GLenum errorCode, GLuint id, const char *msg, ...);
+    Error(GLenum errorCode, std::string &&message);
+    Error(GLenum errorCode, GLuint id, std::string &&message);
     inline Error(const Error &other);
     inline Error(Error &&other);
 
@@ -43,36 +98,40 @@ class Error final
   private:
     void createMessageString() const;
 
+    friend std::ostream &operator<<(std::ostream &os, const Error &err);
+
     GLenum mCode;
     GLuint mID;
     mutable std::unique_ptr<std::string> mMessage;
 };
 
-template <typename T>
-class ErrorOrResult
+template <typename ResultT>
+using ErrorOrResult = angle::ErrorOrResultBase<Error, ResultT, GLenum, GL_NO_ERROR>;
+
+namespace priv
 {
-  public:
-    ErrorOrResult(const gl::Error &error) : mError(error) {}
-    ErrorOrResult(gl::Error &&error) : mError(std::move(error)) {}
 
-    ErrorOrResult(T &&result)
-        : mError(GL_NO_ERROR), mResult(std::forward<T>(result))
-    {
-    }
+template <GLenum EnumT>
+using ErrorStream = angle::ErrorStreamBase<Error, GLenum, GL_NO_ERROR, GLenum, EnumT>;
 
-    ErrorOrResult(const T &result)
-        : mError(GL_NO_ERROR), mResult(result)
-    {
-    }
+}  // namespace priv
 
-    bool isError() const { return mError.isError(); }
-    const gl::Error &getError() const { return mError; }
-    T &&getResult() { return std::move(mResult); }
+using InternalError = priv::ErrorStream<GL_INVALID_OPERATION>;
 
-  private:
-    Error mError;
-    T mResult;
-};
+using InvalidEnum                 = priv::ErrorStream<GL_INVALID_ENUM>;
+using InvalidValue                = priv::ErrorStream<GL_INVALID_VALUE>;
+using InvalidOperation            = priv::ErrorStream<GL_INVALID_OPERATION>;
+using StackOverflow               = priv::ErrorStream<GL_STACK_OVERFLOW>;
+using StackUnderflow              = priv::ErrorStream<GL_STACK_UNDERFLOW>;
+using OutOfMemory                 = priv::ErrorStream<GL_OUT_OF_MEMORY>;
+using InvalidFramebufferOperation = priv::ErrorStream<GL_INVALID_FRAMEBUFFER_OPERATION>;
+
+inline Error NoError()
+{
+    return Error(GL_NO_ERROR);
+}
+
+using LinkResult = ErrorOrResult<bool>;
 
 inline Error NoError()
 {
@@ -88,8 +147,8 @@ class Error final
 {
   public:
     explicit inline Error(EGLint errorCode);
-    Error(EGLint errorCode, const char *msg, ...);
-    Error(EGLint errorCode, EGLint id, const char *msg, ...);
+    Error(EGLint errorCode, std::string &&message);
+    Error(EGLint errorCode, EGLint id, std::string &&message);
     inline Error(const Error &other);
     inline Error(Error &&other);
 
@@ -105,10 +164,45 @@ class Error final
   private:
     void createMessageString() const;
 
+    friend std::ostream &operator<<(std::ostream &os, const Error &err);
+
     EGLint mCode;
     EGLint mID;
     mutable std::unique_ptr<std::string> mMessage;
 };
+
+template <typename ResultT>
+using ErrorOrResult = angle::ErrorOrResultBase<Error, ResultT, EGLint, EGL_SUCCESS>;
+
+namespace priv
+{
+
+template <EGLint EnumT>
+using ErrorStream = angle::ErrorStreamBase<Error, EGLint, EGL_SUCCESS, EGLint, EnumT>;
+
+}  // namespace priv
+
+using EglNotInitialized    = priv::ErrorStream<EGL_NOT_INITIALIZED>;
+using EglBadAccess         = priv::ErrorStream<EGL_BAD_ACCESS>;
+using EglBadAlloc          = priv::ErrorStream<EGL_BAD_ALLOC>;
+using EglBadAttribute      = priv::ErrorStream<EGL_BAD_ATTRIBUTE>;
+using EglBadConfig         = priv::ErrorStream<EGL_BAD_CONFIG>;
+using EglBadContext        = priv::ErrorStream<EGL_BAD_CONTEXT>;
+using EglBadCurrentSurface = priv::ErrorStream<EGL_BAD_CURRENT_SURFACE>;
+using EglBadDisplay        = priv::ErrorStream<EGL_BAD_DISPLAY>;
+using EglBadMatch          = priv::ErrorStream<EGL_BAD_MATCH>;
+using EglBadNativeWindow   = priv::ErrorStream<EGL_BAD_NATIVE_WINDOW>;
+using EglBadParameter      = priv::ErrorStream<EGL_BAD_PARAMETER>;
+using EglBadSurface        = priv::ErrorStream<EGL_BAD_SURFACE>;
+using EglContextLost       = priv::ErrorStream<EGL_CONTEXT_LOST>;
+using EglBadStream         = priv::ErrorStream<EGL_BAD_STREAM_KHR>;
+using EglBadState          = priv::ErrorStream<EGL_BAD_STATE_KHR>;
+using EglBadDevice         = priv::ErrorStream<EGL_BAD_DEVICE_EXT>;
+
+inline Error NoError()
+{
+    return Error(EGL_SUCCESS);
+}
 
 }  // namespace egl
 
@@ -116,15 +210,18 @@ class Error final
 #define ANGLE_CONCAT2(x, y) ANGLE_CONCAT1(x, y)
 #define ANGLE_LOCAL_VAR ANGLE_CONCAT2(_localVar, __LINE__)
 
-#define ANGLE_TRY(EXPR)                \
+#define ANGLE_TRY_TEMPLATE(EXPR, FUNC) \
     {                                  \
         auto ANGLE_LOCAL_VAR = EXPR;   \
         if (ANGLE_LOCAL_VAR.isError()) \
         {                              \
-            return ANGLE_LOCAL_VAR;    \
+            FUNC(ANGLE_LOCAL_VAR);     \
         }                              \
     }                                  \
     ANGLE_EMPTY_STATEMENT
+
+#define ANGLE_RETURN(X) return X;
+#define ANGLE_TRY(EXPR) ANGLE_TRY_TEMPLATE(EXPR, ANGLE_RETURN);
 
 #define ANGLE_TRY_RESULT(EXPR, RESULT)         \
     {                                          \

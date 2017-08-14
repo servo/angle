@@ -14,19 +14,21 @@
 #include "GLSLANG/ShaderLang.h"
 #include "compiler/translator/TranslatorGLSL.h"
 
+using namespace sh;
+
 #define EXPECT_GLENUM_EQ(expected, actual) \
-    EXPECT_EQ(static_cast<GLenum>(expected), static_cast<GLenum>(actual))
+    EXPECT_EQ(static_cast<::GLenum>(expected), static_cast<::GLenum>(actual))
 
 class CollectVariablesTest : public testing::Test
 {
   public:
-    CollectVariablesTest(GLenum shaderType) : mShaderType(shaderType) {}
+    CollectVariablesTest(::GLenum shaderType) : mShaderType(shaderType) {}
 
   protected:
     void SetUp() override
     {
         ShBuiltInResources resources;
-        ShInitBuiltInResources(&resources);
+        InitBuiltInResources(&resources);
         resources.MaxDrawBuffers = 8;
 
         initTranslator(resources);
@@ -45,10 +47,10 @@ class CollectVariablesTest : public testing::Test
         const char *shaderStrings[] = { shaderString.c_str() };
         ASSERT_TRUE(mTranslator->compile(shaderStrings, 1, SH_VARIABLES));
 
-        const std::vector<sh::Uniform> &uniforms = mTranslator->getUniforms();
+        const std::vector<Uniform> &uniforms = mTranslator->getUniforms();
         ASSERT_EQ(1u, uniforms.size());
 
-        const sh::Uniform &uniform = uniforms[0];
+        const Uniform &uniform = uniforms[0];
         EXPECT_EQ("gl_DepthRange", uniform.name);
         ASSERT_TRUE(uniform.isStruct());
         ASSERT_EQ(3u, uniform.fields.size());
@@ -90,7 +92,7 @@ class CollectVariablesTest : public testing::Test
     void validateOutputVariableForShader(const std::string &shaderString,
                                          unsigned int varIndex,
                                          const char *varName,
-                                         const sh::OutputVariable **outResult)
+                                         const OutputVariable **outResult)
     {
         const char *shaderStrings[] = {shaderString.c_str()};
         ASSERT_TRUE(mTranslator->compile(shaderStrings, 1, SH_VARIABLES))
@@ -98,20 +100,22 @@ class CollectVariablesTest : public testing::Test
 
         const auto &outputVariables = mTranslator->getOutputVariables();
         ASSERT_LT(varIndex, outputVariables.size());
-        const sh::OutputVariable &outputVariable = outputVariables[varIndex];
+        const OutputVariable &outputVariable = outputVariables[varIndex];
         EXPECT_EQ(-1, outputVariable.location);
         EXPECT_TRUE(outputVariable.staticUse);
         EXPECT_EQ(varName, outputVariable.name);
         *outResult = &outputVariable;
     }
 
-    void compile(const std::string &shaderString)
+    void compile(const std::string &shaderString, ShCompileOptions compileOptions)
     {
         const char *shaderStrings[] = {shaderString.c_str()};
-        ASSERT_TRUE(mTranslator->compile(shaderStrings, 1, SH_VARIABLES));
+        ASSERT_TRUE(mTranslator->compile(shaderStrings, 1, SH_VARIABLES | compileOptions));
     }
 
-    GLenum mShaderType;
+    void compile(const std::string &shaderString) { compile(shaderString, 0u); }
+
+    ::GLenum mShaderType;
     std::unique_ptr<TranslatorGLSL> mTranslator;
 };
 
@@ -142,7 +146,7 @@ TEST_F(CollectFragmentVariablesTest, SimpleOutputVar)
     const auto &outputVariables = mTranslator->getOutputVariables();
     ASSERT_EQ(1u, outputVariables.size());
 
-    const sh::OutputVariable &outputVariable = outputVariables[0];
+    const OutputVariable &outputVariable = outputVariables[0];
 
     EXPECT_EQ(0u, outputVariable.arraySize);
     EXPECT_EQ(-1, outputVariable.location);
@@ -167,7 +171,7 @@ TEST_F(CollectFragmentVariablesTest, LocationOutputVar)
     const auto &outputVariables = mTranslator->getOutputVariables();
     ASSERT_EQ(1u, outputVariables.size());
 
-    const sh::OutputVariable &outputVariable = outputVariables[0];
+    const OutputVariable &outputVariable = outputVariables[0];
 
     EXPECT_EQ(0u, outputVariable.arraySize);
     EXPECT_EQ(5, outputVariable.location);
@@ -188,10 +192,10 @@ TEST_F(CollectVertexVariablesTest, LocationAttribute)
 
     compile(shaderString);
 
-    const std::vector<sh::Attribute> &attributes = mTranslator->getAttributes();
+    const std::vector<Attribute> &attributes = mTranslator->getAttributes();
     ASSERT_EQ(1u, attributes.size());
 
-    const sh::Attribute &attribute = attributes[0];
+    const Attribute &attribute = attributes[0];
 
     EXPECT_EQ(0u, attribute.arraySize);
     EXPECT_EQ(5, attribute.location);
@@ -214,20 +218,20 @@ TEST_F(CollectVertexVariablesTest, SimpleInterfaceBlock)
 
     compile(shaderString);
 
-    const std::vector<sh::InterfaceBlock> &interfaceBlocks = mTranslator->getInterfaceBlocks();
+    const std::vector<InterfaceBlock> &interfaceBlocks = mTranslator->getInterfaceBlocks();
     ASSERT_EQ(1u, interfaceBlocks.size());
 
-    const sh::InterfaceBlock &interfaceBlock = interfaceBlocks[0];
+    const InterfaceBlock &interfaceBlock = interfaceBlocks[0];
 
     EXPECT_EQ(0u, interfaceBlock.arraySize);
     EXPECT_FALSE(interfaceBlock.isRowMajorLayout);
-    EXPECT_EQ(sh::BLOCKLAYOUT_SHARED, interfaceBlock.layout);
+    EXPECT_EQ(BLOCKLAYOUT_SHARED, interfaceBlock.layout);
     EXPECT_EQ("b", interfaceBlock.name);
     EXPECT_TRUE(interfaceBlock.staticUse);
 
     ASSERT_EQ(1u, interfaceBlock.fields.size());
 
-    const sh::InterfaceBlockField &field = interfaceBlock.fields[0];
+    const InterfaceBlockField &field = interfaceBlock.fields[0];
 
     EXPECT_GLENUM_EQ(GL_HIGH_FLOAT, field.precision);
     EXPECT_TRUE(field.staticUse);
@@ -250,21 +254,21 @@ TEST_F(CollectVertexVariablesTest, SimpleInstancedInterfaceBlock)
 
     compile(shaderString);
 
-    const std::vector<sh::InterfaceBlock> &interfaceBlocks = mTranslator->getInterfaceBlocks();
+    const std::vector<InterfaceBlock> &interfaceBlocks = mTranslator->getInterfaceBlocks();
     ASSERT_EQ(1u, interfaceBlocks.size());
 
-    const sh::InterfaceBlock &interfaceBlock = interfaceBlocks[0];
+    const InterfaceBlock &interfaceBlock = interfaceBlocks[0];
 
     EXPECT_EQ(0u, interfaceBlock.arraySize);
     EXPECT_FALSE(interfaceBlock.isRowMajorLayout);
-    EXPECT_EQ(sh::BLOCKLAYOUT_SHARED, interfaceBlock.layout);
+    EXPECT_EQ(BLOCKLAYOUT_SHARED, interfaceBlock.layout);
     EXPECT_EQ("b", interfaceBlock.name);
     EXPECT_EQ("blockInstance", interfaceBlock.instanceName);
     EXPECT_TRUE(interfaceBlock.staticUse);
 
     ASSERT_EQ(1u, interfaceBlock.fields.size());
 
-    const sh::InterfaceBlockField &field = interfaceBlock.fields[0];
+    const InterfaceBlockField &field = interfaceBlock.fields[0];
 
     EXPECT_GLENUM_EQ(GL_HIGH_FLOAT, field.precision);
     EXPECT_TRUE(field.staticUse);
@@ -288,27 +292,27 @@ TEST_F(CollectVertexVariablesTest, StructInterfaceBlock)
 
     compile(shaderString);
 
-    const std::vector<sh::InterfaceBlock> &interfaceBlocks = mTranslator->getInterfaceBlocks();
+    const std::vector<InterfaceBlock> &interfaceBlocks = mTranslator->getInterfaceBlocks();
     ASSERT_EQ(1u, interfaceBlocks.size());
 
-    const sh::InterfaceBlock &interfaceBlock = interfaceBlocks[0];
+    const InterfaceBlock &interfaceBlock = interfaceBlocks[0];
 
     EXPECT_EQ(0u, interfaceBlock.arraySize);
     EXPECT_FALSE(interfaceBlock.isRowMajorLayout);
-    EXPECT_EQ(sh::BLOCKLAYOUT_SHARED, interfaceBlock.layout);
+    EXPECT_EQ(BLOCKLAYOUT_SHARED, interfaceBlock.layout);
     EXPECT_EQ("b", interfaceBlock.name);
     EXPECT_TRUE(interfaceBlock.staticUse);
 
     ASSERT_EQ(1u, interfaceBlock.fields.size());
 
-    const sh::InterfaceBlockField &field = interfaceBlock.fields[0];
+    const InterfaceBlockField &field = interfaceBlock.fields[0];
 
     EXPECT_TRUE(field.isStruct());
     EXPECT_TRUE(field.staticUse);
     EXPECT_EQ("s", field.name);
     EXPECT_FALSE(field.isRowMajorLayout);
 
-    const sh::ShaderVariable &member = field.fields[0];
+    const ShaderVariable &member = field.fields[0];
 
     // NOTE: we don't currently mark struct members as statically used or not
     EXPECT_FALSE(member.isStruct());
@@ -331,28 +335,28 @@ TEST_F(CollectVertexVariablesTest, StructInstancedInterfaceBlock)
 
     compile(shaderString);
 
-    const std::vector<sh::InterfaceBlock> &interfaceBlocks = mTranslator->getInterfaceBlocks();
+    const std::vector<InterfaceBlock> &interfaceBlocks = mTranslator->getInterfaceBlocks();
     ASSERT_EQ(1u, interfaceBlocks.size());
 
-    const sh::InterfaceBlock &interfaceBlock = interfaceBlocks[0];
+    const InterfaceBlock &interfaceBlock = interfaceBlocks[0];
 
     EXPECT_EQ(0u, interfaceBlock.arraySize);
     EXPECT_FALSE(interfaceBlock.isRowMajorLayout);
-    EXPECT_EQ(sh::BLOCKLAYOUT_SHARED, interfaceBlock.layout);
+    EXPECT_EQ(BLOCKLAYOUT_SHARED, interfaceBlock.layout);
     EXPECT_EQ("b", interfaceBlock.name);
     EXPECT_EQ("instanceName", interfaceBlock.instanceName);
     EXPECT_TRUE(interfaceBlock.staticUse);
 
     ASSERT_EQ(1u, interfaceBlock.fields.size());
 
-    const sh::InterfaceBlockField &field = interfaceBlock.fields[0];
+    const InterfaceBlockField &field = interfaceBlock.fields[0];
 
     EXPECT_TRUE(field.isStruct());
     EXPECT_TRUE(field.staticUse);
     EXPECT_EQ("s", field.name);
     EXPECT_FALSE(field.isRowMajorLayout);
 
-    const sh::ShaderVariable &member = field.fields[0];
+    const ShaderVariable &member = field.fields[0];
 
     // NOTE: we don't currently mark struct members as statically used or not
     EXPECT_FALSE(member.isStruct());
@@ -375,27 +379,27 @@ TEST_F(CollectVertexVariablesTest, NestedStructRowMajorInterfaceBlock)
 
     compile(shaderString);
 
-    const std::vector<sh::InterfaceBlock> &interfaceBlocks = mTranslator->getInterfaceBlocks();
+    const std::vector<InterfaceBlock> &interfaceBlocks = mTranslator->getInterfaceBlocks();
     ASSERT_EQ(1u, interfaceBlocks.size());
 
-    const sh::InterfaceBlock &interfaceBlock = interfaceBlocks[0];
+    const InterfaceBlock &interfaceBlock = interfaceBlocks[0];
 
     EXPECT_EQ(0u, interfaceBlock.arraySize);
     EXPECT_TRUE(interfaceBlock.isRowMajorLayout);
-    EXPECT_EQ(sh::BLOCKLAYOUT_SHARED, interfaceBlock.layout);
+    EXPECT_EQ(BLOCKLAYOUT_SHARED, interfaceBlock.layout);
     EXPECT_EQ("b", interfaceBlock.name);
     EXPECT_TRUE(interfaceBlock.staticUse);
 
     ASSERT_EQ(1u, interfaceBlock.fields.size());
 
-    const sh::InterfaceBlockField &field = interfaceBlock.fields[0];
+    const InterfaceBlockField &field = interfaceBlock.fields[0];
 
     EXPECT_TRUE(field.isStruct());
     EXPECT_TRUE(field.staticUse);
     EXPECT_EQ("s", field.name);
     EXPECT_TRUE(field.isRowMajorLayout);
 
-    const sh::ShaderVariable &member = field.fields[0];
+    const ShaderVariable &member = field.fields[0];
 
     // NOTE: we don't currently mark struct members as statically used or not
     EXPECT_FALSE(member.isStruct());
@@ -417,10 +421,10 @@ TEST_F(CollectVertexVariablesTest, VaryingInterpolation)
 
     compile(shaderString);
 
-    const std::vector<sh::Varying> &varyings = mTranslator->getVaryings();
+    const std::vector<Varying> &varyings = mTranslator->getOutputVaryings();
     ASSERT_EQ(2u, varyings.size());
 
-    const sh::Varying *varying = &varyings[0];
+    const Varying *varying = &varyings[0];
 
     if (varying->name == "gl_Position")
     {
@@ -432,7 +436,7 @@ TEST_F(CollectVertexVariablesTest, VaryingInterpolation)
     EXPECT_TRUE(varying->staticUse);
     EXPECT_GLENUM_EQ(GL_FLOAT, varying->type);
     EXPECT_EQ("vary", varying->name);
-    EXPECT_EQ(sh::INTERPOLATION_CENTROID, varying->interpolation);
+    EXPECT_EQ(INTERPOLATION_CENTROID, varying->interpolation);
 }
 
 // Test for builtin uniform "gl_DepthRange" (Vertex shader)
@@ -469,7 +473,7 @@ TEST_F(CollectFragmentVariablesTest, OutputVarESSL1FragColor)
         "   gl_FragColor = vec4(1.0);\n"
         "}\n";
 
-    const sh::OutputVariable *outputVariable = nullptr;
+    const OutputVariable *outputVariable = nullptr;
     validateOutputVariableForShader(fragColorShader, 0u, "gl_FragColor", &outputVariable);
     ASSERT_NE(outputVariable, nullptr);
     EXPECT_EQ(0u, outputVariable->arraySize);
@@ -495,7 +499,7 @@ TEST_F(CollectFragmentVariablesTest, OutputVarESSL1FragData)
     resources.MaxDrawBuffers = kMaxDrawBuffers;
     initTranslator(resources);
 
-    const sh::OutputVariable *outputVariable = nullptr;
+    const OutputVariable *outputVariable = nullptr;
     validateOutputVariableForShader(fragDataShader, 0u, "gl_FragData", &outputVariable);
     ASSERT_NE(outputVariable, nullptr);
     EXPECT_EQ(kMaxDrawBuffers, outputVariable->arraySize);
@@ -518,7 +522,7 @@ TEST_F(CollectFragmentVariablesTest, OutputVarESSL1FragDepthMediump)
     resources.EXT_frag_depth = 1;
     initTranslator(resources);
 
-    const sh::OutputVariable *outputVariable = nullptr;
+    const OutputVariable *outputVariable = nullptr;
     validateOutputVariableForShader(fragDepthShader, 0u, "gl_FragDepthEXT", &outputVariable);
     ASSERT_NE(outputVariable, nullptr);
     EXPECT_EQ(0u, outputVariable->arraySize);
@@ -541,7 +545,7 @@ TEST_F(CollectFragmentVariablesTest, OutputVarESSL1FragDepthHighp)
     resources.FragmentPrecisionHigh = 1;
     initTranslator(resources);
 
-    const sh::OutputVariable *outputVariable = nullptr;
+    const OutputVariable *outputVariable = nullptr;
     validateOutputVariableForShader(fragDepthHighShader, 0u, "gl_FragDepthEXT", &outputVariable);
     ASSERT_NE(outputVariable, nullptr);
     EXPECT_EQ(0u, outputVariable->arraySize);
@@ -564,7 +568,7 @@ TEST_F(CollectFragmentVariablesTest, OutputVarESSL3FragDepthHighp)
     resources.EXT_frag_depth = 1;
     initTranslator(resources);
 
-    const sh::OutputVariable *outputVariable = nullptr;
+    const OutputVariable *outputVariable = nullptr;
     validateOutputVariableForShader(fragDepthHighShader, 0u, "gl_FragDepth", &outputVariable);
     ASSERT_NE(outputVariable, nullptr);
     EXPECT_EQ(0u, outputVariable->arraySize);
@@ -592,7 +596,7 @@ TEST_F(CollectFragmentVariablesTest, OutputVarESSL1EXTBlendFuncExtendedSecondary
     resources.MaxDualSourceDrawBuffers = resources.MaxDrawBuffers;
     initTranslator(resources);
 
-    const sh::OutputVariable *outputVariable = nullptr;
+    const OutputVariable *outputVariable = nullptr;
     validateOutputVariableForShader(secondaryFragColorShader, 0u, "gl_FragColor", &outputVariable);
     ASSERT_NE(outputVariable, nullptr);
     EXPECT_EQ(0u, outputVariable->arraySize);
@@ -630,7 +634,7 @@ TEST_F(CollectFragmentVariablesTest, OutputVarESSL1EXTBlendFuncExtendedSecondary
     resources.MaxDualSourceDrawBuffers = resources.MaxDrawBuffers;
     initTranslator(resources);
 
-    const sh::OutputVariable *outputVariable = nullptr;
+    const OutputVariable *outputVariable = nullptr;
     validateOutputVariableForShader(secondaryFragDataShader, 0u, "gl_FragData", &outputVariable);
     ASSERT_NE(outputVariable, nullptr);
     EXPECT_EQ(kMaxDrawBuffers, outputVariable->arraySize);
@@ -658,7 +662,7 @@ class CollectHashedVertexVariablesTest : public CollectVertexVariablesTest
     {
         // Initialize the translate with a hash function
         ShBuiltInResources resources;
-        ShInitBuiltInResources(&resources);
+        sh::InitBuiltInResources(&resources);
         resources.HashFunction = SimpleTestHash;
         initTranslator(resources);
     }
@@ -677,14 +681,14 @@ TEST_F(CollectHashedVertexVariablesTest, InstancedInterfaceBlock)
 
     compile(shaderString);
 
-    const std::vector<sh::InterfaceBlock> &interfaceBlocks = mTranslator->getInterfaceBlocks();
+    const std::vector<InterfaceBlock> &interfaceBlocks = mTranslator->getInterfaceBlocks();
     ASSERT_EQ(1u, interfaceBlocks.size());
 
-    const sh::InterfaceBlock &interfaceBlock = interfaceBlocks[0];
+    const InterfaceBlock &interfaceBlock = interfaceBlocks[0];
 
     EXPECT_EQ(0u, interfaceBlock.arraySize);
     EXPECT_FALSE(interfaceBlock.isRowMajorLayout);
-    EXPECT_EQ(sh::BLOCKLAYOUT_SHARED, interfaceBlock.layout);
+    EXPECT_EQ(BLOCKLAYOUT_SHARED, interfaceBlock.layout);
     EXPECT_EQ("blockName", interfaceBlock.name);
     EXPECT_EQ("blockInstance", interfaceBlock.instanceName);
     EXPECT_EQ("webgl_9", interfaceBlock.mappedName);
@@ -692,7 +696,7 @@ TEST_F(CollectHashedVertexVariablesTest, InstancedInterfaceBlock)
 
     ASSERT_EQ(1u, interfaceBlock.fields.size());
 
-    const sh::InterfaceBlockField &field = interfaceBlock.fields[0];
+    const InterfaceBlockField &field = interfaceBlock.fields[0];
 
     EXPECT_GLENUM_EQ(GL_HIGH_FLOAT, field.precision);
     EXPECT_TRUE(field.staticUse);
@@ -720,7 +724,7 @@ TEST_F(CollectHashedVertexVariablesTest, StructUniform)
     const auto &uniforms = mTranslator->getUniforms();
     ASSERT_EQ(1u, uniforms.size());
 
-    const sh::Uniform &uniform = uniforms[0];
+    const Uniform &uniform = uniforms[0];
 
     EXPECT_EQ(0u, uniform.arraySize);
     EXPECT_EQ("u", uniform.name);
@@ -729,7 +733,7 @@ TEST_F(CollectHashedVertexVariablesTest, StructUniform)
 
     ASSERT_EQ(1u, uniform.fields.size());
 
-    const sh::ShaderVariable &field = uniform.fields[0];
+    const ShaderVariable &field = uniform.fields[0];
 
     EXPECT_GLENUM_EQ(GL_HIGH_FLOAT, field.precision);
     // EXPECT_TRUE(field.staticUse); // we don't yet support struct static use
@@ -737,4 +741,92 @@ TEST_F(CollectHashedVertexVariablesTest, StructUniform)
     EXPECT_EQ("field", field.name);
     EXPECT_EQ("webgl_5", field.mappedName);
     EXPECT_TRUE(field.fields.empty());
+}
+
+// Test a uniform declaration with multiple declarators.
+TEST_F(CollectFragmentVariablesTest, MultiDeclaration)
+{
+    const std::string &shaderString =
+        "#version 300 es\n"
+        "precision mediump float;\n"
+        "out vec4 out_fragColor;\n"
+        "uniform float uA, uB;\n"
+        "void main()\n"
+        "{\n"
+        "    vec4 color = vec4(uA, uA, uA, uB);\n"
+        "    out_fragColor = color;\n"
+        "}\n";
+
+    compile(shaderString);
+
+    const auto &uniforms = mTranslator->getUniforms();
+    ASSERT_EQ(2u, uniforms.size());
+
+    const Uniform &uniform = uniforms[0];
+    EXPECT_EQ(0u, uniform.arraySize);
+    EXPECT_GLENUM_EQ(GL_MEDIUM_FLOAT, uniform.precision);
+    EXPECT_TRUE(uniform.staticUse);
+    EXPECT_GLENUM_EQ(GL_FLOAT, uniform.type);
+    EXPECT_EQ("uA", uniform.name);
+
+    const Uniform &uniformB = uniforms[1];
+    EXPECT_EQ(0u, uniformB.arraySize);
+    EXPECT_GLENUM_EQ(GL_MEDIUM_FLOAT, uniformB.precision);
+    EXPECT_TRUE(uniformB.staticUse);
+    EXPECT_GLENUM_EQ(GL_FLOAT, uniformB.type);
+    EXPECT_EQ("uB", uniformB.name);
+}
+
+// Test a uniform declaration starting with an empty declarator.
+TEST_F(CollectFragmentVariablesTest, EmptyDeclarator)
+{
+    const std::string &shaderString =
+        "#version 300 es\n"
+        "precision mediump float;\n"
+        "out vec4 out_fragColor;\n"
+        "uniform float /* empty declarator */, uB;\n"
+        "void main()\n"
+        "{\n"
+        "    out_fragColor = vec4(uB, uB, uB, uB);\n"
+        "}\n";
+
+    compile(shaderString);
+
+    const auto &uniforms = mTranslator->getUniforms();
+    ASSERT_EQ(1u, uniforms.size());
+
+    const Uniform &uniformB = uniforms[0];
+    EXPECT_EQ(0u, uniformB.arraySize);
+    EXPECT_GLENUM_EQ(GL_MEDIUM_FLOAT, uniformB.precision);
+    EXPECT_TRUE(uniformB.staticUse);
+    EXPECT_GLENUM_EQ(GL_FLOAT, uniformB.type);
+    EXPECT_EQ("uB", uniformB.name);
+}
+
+// Test collecting variables from an instanced multiview shader that has an internal ViewID_OVR
+// varying.
+TEST_F(CollectVertexVariablesTest, ViewID_OVR)
+{
+    const std::string &shaderString =
+        "#version 300 es\n"
+        "#extension GL_OVR_multiview : require\n"
+        "precision mediump float;\n"
+        "void main()\n"
+        "{\n"
+        "    gl_Position = vec4(0.0);\n"
+        "}\n";
+
+    ShBuiltInResources resources = mTranslator->getResources();
+    resources.OVR_multiview      = 1;
+    resources.MaxViewsOVR        = 4;
+    initTranslator(resources);
+
+    compile(shaderString, SH_INITIALIZE_BUILTINS_FOR_INSTANCED_MULTIVIEW |
+                              SH_SELECT_VIEW_IN_NV_GLSL_VERTEX_SHADER);
+
+    // The internal ViewID_OVR varying is not exposed through the ShaderVars interface.
+    const auto &varyings = mTranslator->getOutputVaryings();
+    ASSERT_EQ(1u, varyings.size());
+    const Varying *varying = &varyings[0];
+    EXPECT_EQ("gl_Position", varying->name);
 }

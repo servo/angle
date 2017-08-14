@@ -13,10 +13,12 @@
 // TODO(jmadill): Rework this if Chromium decides to ban <random>
 #include <random>
 
+#include <export.h>
+
 namespace angle
 {
 
-class RNG
+class ANGLE_EXPORT RNG
 {
   public:
     // Seed from clock
@@ -37,6 +39,16 @@ class RNG
   private:
     std::default_random_engine mGenerator;
 };
+
+// Implemented htis way because of cross-module allocation issues.
+inline void FillVectorWithRandomUBytes(std::vector<uint8_t> *data)
+{
+    RNG rng;
+    for (size_t i = 0; i < data->size(); ++i)
+    {
+        (*data)[i] = static_cast<uint8_t>(rng.randomIntBetween(0, 255));
+    }
+}
 
 }  // namespace angle
 
