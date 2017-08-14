@@ -12,7 +12,7 @@ pub mod ffi {
         pub fn GLSLangInitBuiltInResources(res: *mut ShBuiltInResources);
         pub fn GLSLangConstructCompiler(_type: c_uint, spec: c_int, output: c_int, resources_ptr: *const ShBuiltInResources) -> ShHandle;
         pub fn GLSLangDestructCompiler(handle: ShHandle);
-        pub fn GLSLangCompile(handle: ShHandle, strings: *const *const c_char, num_strings: usize, compile_options: c_int) -> c_int;
+        pub fn GLSLangCompile(handle: ShHandle, strings: *const *const c_char, num_strings: usize, compile_options: ShCompileOptions) -> c_int;
         pub fn GLSLangClearResults(handle: ShHandle);
         pub fn GLSLangGetShaderVersion(handle: ShHandle) -> c_int;
         pub fn GLSLangGetShaderOutputType(handle: ShHandle) -> c_int;
@@ -80,7 +80,10 @@ mod tests {
 
         let result = compiler.compile_and_translate(&[SHADER]).unwrap();
         println!("{:?}", result);
-        assert!(result == EXPECTED);
+        // Use result.contains instead of equal because Angle may add some extensions such as
+        // "#extension GL_ARB_gpu_shader5 : enable" on some platorms and compilation options.
+        // See TranslatorGLSL.cpp for more details.
+        assert!(result.contains(EXPECTED));
     }
 
     #[test]
@@ -101,6 +104,6 @@ mod tests {
 
         let result = compiler.compile_and_translate(&[SHADER]).unwrap();
         println!("{:?}", result);
-        assert!(result == EXPECTED);
+        assert!(result.contains(EXPECTED));
     }
 }

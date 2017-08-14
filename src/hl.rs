@@ -1,5 +1,4 @@
 use super::ffi::*;
-use super::ffi::ShCompileOptions::*;
 use super::ffi::ShShaderOutput::*;
 use super::ffi::ShShaderSpec::*;
 
@@ -34,7 +33,7 @@ pub enum ShaderSpec {
     WebGL,
     Gles3,
     WebGL2,
-    Css,
+    WebGL3,
 }
 
 impl AsAngleEnum for ShaderSpec {
@@ -45,7 +44,7 @@ impl AsAngleEnum for ShaderSpec {
             ShaderSpec::WebGL => SH_WEBGL_SPEC,
             ShaderSpec::Gles3 => SH_GLES3_SPEC,
             ShaderSpec::WebGL2 => SH_WEBGL2_SPEC,
-            ShaderSpec::Css => SH_CSS_SHADERS_SPEC,
+            ShaderSpec::WebGL3 => SH_WEBGL3_SPEC,
         }) as i32
     }
 }
@@ -141,7 +140,14 @@ impl ShaderValidator {
         Self::new(shader_type, ShaderSpec::WebGL, output, resources)
     }
 
-    pub fn compile(&self, strings: &[&str], options: i32) -> Result<(), &'static str> {
+    #[inline]
+    pub fn for_webgl2(shader_type: u32,
+                      output: Output,
+                      resources: &BuiltInResources) -> Option<ShaderValidator> {
+        Self::new(shader_type, ShaderSpec::WebGL2, output, resources)
+    }
+
+    pub fn compile(&self, strings: &[&str], options: ShCompileOptions) -> Result<(), &'static str> {
         let mut cstrings = Vec::with_capacity(strings.len());
 
         for s in strings.iter() {
@@ -174,13 +180,14 @@ impl ShaderValidator {
     }
 
     pub fn compile_and_translate(&self, strings: &[&str]) -> Result<String, &'static str> {
-
-        let options = SH_VALIDATE as i32 | SH_OBJECT_CODE as i32|
-                      SH_EMULATE_BUILT_IN_FUNCTIONS as i32 | // To workaround drivers
-                      SH_CLAMP_INDIRECT_ARRAY_BOUNDS as i32 |
-                      SH_INIT_GL_POSITION as i32 |
-                      SH_ENFORCE_PACKING_RESTRICTIONS as i32 |
-                      SH_LIMIT_CALL_STACK_DEPTH as i32;
+        let options = SH_VALIDATE | SH_OBJECT_CODE |
+                      SH_EMULATE_ABS_INT_FUNCTION | // To workaround drivers
+                      SH_EMULATE_ISNAN_FLOAT_FUNCTION | // To workaround drivers
+                      SH_EMULATE_ATAN2_FLOAT_FUNCTION | // To workaround drivers
+                      SH_CLAMP_INDIRECT_ARRAY_BOUNDS |
+                      SH_INIT_GL_POSITION |
+                      SH_ENFORCE_PACKING_RESTRICTIONS |
+                      SH_LIMIT_CALL_STACK_DEPTH;
 
         // Todo(Mortimer): Add SH_TIMING_RESTRICTIONS to options when the implementations gets better
         // Right now SH_TIMING_RESTRICTIONS is experimental 
