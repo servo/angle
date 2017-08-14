@@ -1,1 +1,1 @@
-bindgen --unstable-rust --opaque-type "std.*" --whitelist-type "Sh.*" -o src/bindings.rs include/wrapper.hpp -- Iinclude
+bindgen --unstable-rust --opaque-type "std.*" --whitelist-type "Sh.*" --whitelist-type "SH.*" -o src/bindings.rs include/wrapper.hpp -- Iinclude -- -std=c++11
