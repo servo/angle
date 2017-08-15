@@ -7,5 +7,8 @@ license = "MIT"
 
 build = "build.rs"
 
+[dependencies] 
+lazy_static = "0.2"
+
 [build-dependencies]
 cmake = "0.1"

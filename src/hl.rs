@@ -6,7 +6,15 @@ use std::default;
 use std::ffi::CStr;
 use std::ffi::CString;
 use std::mem;
+use std::sync::Mutex;
 use std::os::raw::c_char;
+
+lazy_static! {
+    static ref CONSTRUCT_COMPILER_LOCK: Mutex<()> = {
+        Mutex::new(())
+    };
+}
+
 
 pub fn initialize() -> Result<(), &'static str> {
     if unsafe { GLSLangInitialize() } == 0 {
@@ -93,7 +101,7 @@ pub type BuiltInResources = ShBuiltInResources;
 impl default::Default for BuiltInResources {
     fn default() -> BuiltInResources {
         unsafe {
-            let mut ret: BuiltInResources = mem::uninitialized();
+            let mut ret: BuiltInResources = mem::zeroed();
             GLSLangInitBuiltInResources(&mut ret);
             ret
         }
@@ -120,6 +128,9 @@ impl ShaderValidator {
                spec: ShaderSpec,
                output: Output,
                resources: &BuiltInResources) -> Option<ShaderValidator> {
+        // GLSLangConstructCompiler is non-thread safe because it internally calls TCache::getType()
+        // which writes/reads a std::map<T> with no locks.
+        let _guard = CONSTRUCT_COMPILER_LOCK.lock().unwrap();
         let handle = unsafe {
             GLSLangConstructCompiler(shader_type, spec.as_angle_enum(), output.as_angle_enum(), resources)
         };
