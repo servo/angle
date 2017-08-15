@@ -54,17 +54,22 @@ struct SharedSwapState
 class WindowSurfaceCGL : public SurfaceGL
 {
   public:
-    WindowSurfaceCGL(RendererGL *renderer,
-                     CALayer *layer,
+    WindowSurfaceCGL(const egl::SurfaceState &state,
+                     RendererGL *renderer,
+                     EGLNativeWindowType layer,
                      const FunctionsGL *functions,
                      CGLContextObj context);
     ~WindowSurfaceCGL() override;
 
-    egl::Error initialize() override;
+    egl::Error initialize(const egl::Display *display) override;
     egl::Error makeCurrent() override;
 
-    egl::Error swap() override;
-    egl::Error postSubBuffer(EGLint x, EGLint y, EGLint width, EGLint height) override;
+    egl::Error swap(const gl::Context *context) override;
+    egl::Error postSubBuffer(const gl::Context *context,
+                             EGLint x,
+                             EGLint y,
+                             EGLint width,
+                             EGLint height) override;
     egl::Error querySurfacePointerANGLE(EGLint attribute, void **value) override;
     egl::Error bindTexImage(gl::Texture *texture, EGLint buffer) override;
     egl::Error releaseTexImage(EGLint buffer) override;
@@ -76,7 +81,7 @@ class WindowSurfaceCGL : public SurfaceGL
     EGLint isPostSubBufferSupported() const override;
     EGLint getSwapBehavior() const override;
 
-    FramebufferImpl *createDefaultFramebuffer(const gl::Framebuffer::Data &data) override;
+    FramebufferImpl *createDefaultFramebuffer(const gl::FramebufferState &state) override;
 
   private:
     SwapLayer *mSwapLayer;
@@ -87,12 +92,13 @@ class WindowSurfaceCGL : public SurfaceGL
     CGLContextObj mContext;
     const FunctionsGL *mFunctions;
     StateManagerGL *mStateManager;
+    RendererGL *mRenderer;
     const WorkaroundsGL &mWorkarounds;
 
     GLuint mFramebuffer;
     GLuint mDSRenderbuffer;
 };
 
-}
+}  // namespace rx
 
 #endif // LIBANGLE_RENDERER_GL_CGL_WINDOWSURFACECGL_H_

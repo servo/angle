@@ -20,14 +20,16 @@ namespace rx
 class MockProgramImpl : public rx::ProgramImpl
 {
   public:
-    MockProgramImpl() : ProgramImpl(gl::Program::Data()) {}
-    virtual ~MockProgramImpl() { destroy(); }
+    MockProgramImpl() : ProgramImpl(gl::ProgramState()) {}
+    virtual ~MockProgramImpl() { destructor(); }
 
-    MOCK_METHOD2(load, LinkResult(gl::InfoLog &, gl::BinaryInputStream *));
-    MOCK_METHOD1(save, gl::Error(gl::BinaryOutputStream *));
+    MOCK_METHOD3(load, gl::LinkResult(const gl::Context *, gl::InfoLog &, gl::BinaryInputStream *));
+    MOCK_METHOD2(save, void(const gl::Context *, gl::BinaryOutputStream *));
     MOCK_METHOD1(setBinaryRetrievableHint, void(bool));
+    MOCK_METHOD1(setSeparable, void(bool));
 
-    MOCK_METHOD2(link, LinkResult(const gl::Data &, gl::InfoLog &));
+    MOCK_METHOD3(link,
+                 gl::LinkResult(const gl::Context *, const gl::VaryingPacking &, gl::InfoLog &));
     MOCK_METHOD2(validate, GLboolean(const gl::Caps &, gl::InfoLog *));
 
     MOCK_METHOD3(setUniform1fv, void(GLint, GLsizei, const GLfloat *));
@@ -56,8 +58,10 @@ class MockProgramImpl : public rx::ProgramImpl
     MOCK_METHOD2(setUniformBlockBinding, void(GLuint, GLuint));
     MOCK_CONST_METHOD2(getUniformBlockSize, bool(const std::string &, size_t *));
     MOCK_CONST_METHOD2(getUniformBlockMemberInfo, bool(const std::string &, sh::BlockMemberInfo *));
+    MOCK_METHOD4(setPathFragmentInputGen,
+                 void(const std::string &, GLenum, GLint, const GLfloat *));
 
-    MOCK_METHOD0(destroy, void());
+    MOCK_METHOD0(destructor, void());
 };
 
 inline ::testing::NiceMock<MockProgramImpl> *MakeProgramMock()
@@ -65,7 +69,7 @@ inline ::testing::NiceMock<MockProgramImpl> *MakeProgramMock()
     ::testing::NiceMock<MockProgramImpl> *programImpl = new ::testing::NiceMock<MockProgramImpl>();
     // TODO(jmadill): add ON_CALLS for returning methods
     // We must mock the destructor since NiceMock doesn't work for destructors.
-    EXPECT_CALL(*programImpl, destroy()).Times(1).RetiresOnSaturation();
+    EXPECT_CALL(*programImpl, destructor()).Times(1).RetiresOnSaturation();
 
     return programImpl;
 }

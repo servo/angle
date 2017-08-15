@@ -67,18 +67,14 @@ TEST_F(FenceNVTest, DestructionDeletesImpl)
 
 TEST_F(FenceNVTest, SetAndTestBehavior)
 {
-    EXPECT_CALL(*mImpl, set(_))
-        .WillOnce(Return(gl::Error(GL_NO_ERROR)))
-        .RetiresOnSaturation();
+    EXPECT_CALL(*mImpl, set(_)).WillOnce(Return(gl::NoError())).RetiresOnSaturation();
     EXPECT_FALSE(mFence->isSet());
     mFence->set(GL_ALL_COMPLETED_NV);
     EXPECT_TRUE(mFence->isSet());
     // Fake the behavior of testing the fence before and after it's passed.
     EXPECT_CALL(*mImpl, test(_))
-        .WillOnce(DoAll(SetArgumentPointee<0>(GL_FALSE),
-                        Return(gl::Error(GL_NO_ERROR))))
-        .WillOnce(DoAll(SetArgumentPointee<0>(GL_TRUE),
-                        Return(gl::Error(GL_NO_ERROR))))
+        .WillOnce(DoAll(SetArgumentPointee<0>(GL_FALSE), Return(gl::NoError())))
+        .WillOnce(DoAll(SetArgumentPointee<0>(GL_TRUE), Return(gl::NoError())))
         .RetiresOnSaturation();
     GLboolean out;
     mFence->test(&out);
@@ -115,10 +111,7 @@ class FenceSyncTest : public testing::Test
         mFence->addRef();
     }
 
-    virtual void TearDown()
-    {
-        mFence->release();
-    }
+    virtual void TearDown() { mFence->release(nullptr); }
 
     MockFenceSyncImpl *mImpl;
     gl::FenceSync* mFence;
@@ -131,7 +124,7 @@ TEST_F(FenceSyncTest, DestructionDeletesImpl)
 
     gl::FenceSync* fence = new gl::FenceSync(impl, 1);
     fence->addRef();
-    fence->release();
+    fence->release(nullptr);
 
     // Only needed because the mock is leaked if bugs are present,
     // which logs an error, but does not cause the test to fail.
@@ -141,17 +134,13 @@ TEST_F(FenceSyncTest, DestructionDeletesImpl)
 
 TEST_F(FenceSyncTest, SetAndGetStatusBehavior)
 {
-    EXPECT_CALL(*mImpl, set(_, _))
-        .WillOnce(Return(gl::Error(GL_NO_ERROR)))
-        .RetiresOnSaturation();
+    EXPECT_CALL(*mImpl, set(_, _)).WillOnce(Return(gl::NoError())).RetiresOnSaturation();
     mFence->set(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
     EXPECT_EQ(static_cast<GLenum>(GL_SYNC_GPU_COMMANDS_COMPLETE), mFence->getCondition());
     // Fake the behavior of testing the fence before and after it's passed.
     EXPECT_CALL(*mImpl, getStatus(_))
-        .WillOnce(DoAll(SetArgumentPointee<0>(GL_UNSIGNALED),
-                        Return(gl::Error(GL_NO_ERROR))))
-        .WillOnce(DoAll(SetArgumentPointee<0>(GL_SIGNALED),
-                        Return(gl::Error(GL_NO_ERROR))))
+        .WillOnce(DoAll(SetArgumentPointee<0>(GL_UNSIGNALED), Return(gl::NoError())))
+        .WillOnce(DoAll(SetArgumentPointee<0>(GL_SIGNALED), Return(gl::NoError())))
         .RetiresOnSaturation();
     GLint out;
     mFence->getStatus(&out);

@@ -8,8 +8,20 @@
 //
 
 #include "test_utils/ANGLETest.h"
+#include "test_utils/gl_raii.h"
 
 using namespace angle;
+
+namespace
+{
+
+void ExpectFramebufferCompleteOrUnsupported(GLenum binding)
+{
+    GLenum status = glCheckFramebufferStatus(binding);
+    EXPECT_TRUE(status == GL_FRAMEBUFFER_COMPLETE || status == GL_FRAMEBUFFER_UNSUPPORTED);
+}
+
+}  // anonymous namespace
 
 class FramebufferFormatsTest : public ANGLETest
 {
@@ -65,7 +77,15 @@ class FramebufferFormatsTest : public ANGLETest
     {
         glGenTextures(1, &mTexture);
         glBindTexture(GL_TEXTURE_2D, mTexture);
-        glTexStorage2DEXT(GL_TEXTURE_2D, 1, internalFormat, 1, 1);
+
+        if (getClientMajorVersion() >= 3)
+        {
+            glTexStorage2D(GL_TEXTURE_2D, 1, internalFormat, 1, 1);
+        }
+        else
+        {
+            glTexStorage2DEXT(GL_TEXTURE_2D, 1, internalFormat, 1, 1);
+        }
 
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, mTexture, 0);
 
@@ -83,7 +103,7 @@ class FramebufferFormatsTest : public ANGLETest
             return;
         }
 
-        int clientVersion = getClientVersion();
+        int clientVersion = getClientMajorVersion();
         if (clientVersion < minESVersion)
         {
             return;
@@ -179,19 +199,34 @@ class FramebufferFormatsTest : public ANGLETest
 
 TEST_P(FramebufferFormatsTest, RGBA4)
 {
+    if (getClientMajorVersion() < 3 && !extensionEnabled("GL_EXT_texture_storage"))
+    {
+        std::cout << "Test skipped due to missing ES3 or GL_EXT_texture_storage." << std::endl;
+        return;
+    }
+
     testTextureFormat(GL_RGBA4, 4, 4, 4, 4);
 }
 
 TEST_P(FramebufferFormatsTest, RGB565)
 {
+    if (getClientMajorVersion() < 3 && !extensionEnabled("GL_EXT_texture_storage"))
+    {
+        std::cout << "Test skipped due to missing ES3 or GL_EXT_texture_storage." << std::endl;
+        return;
+    }
+
     testTextureFormat(GL_RGB565, 5, 6, 5, 0);
 }
 
 TEST_P(FramebufferFormatsTest, RGB8)
 {
-    if (getClientVersion() < 3 && !extensionEnabled("GL_OES_rgb8_rgba8"))
+    if (getClientMajorVersion() < 3 &&
+        (!extensionEnabled("GL_OES_rgb8_rgba8") || !extensionEnabled("GL_EXT_texture_storage")))
     {
-        std::cout << "Test skipped due to missing ES3 or GL_OES_rgb8_rgba8." << std::endl;
+        std::cout
+            << "Test skipped due to missing ES3 or GL_OES_rgb8_rgba8 and GL_EXT_texture_storage."
+            << std::endl;
         return;
     }
 
@@ -200,9 +235,12 @@ TEST_P(FramebufferFormatsTest, RGB8)
 
 TEST_P(FramebufferFormatsTest, BGRA8)
 {
-    if (!extensionEnabled("GL_EXT_texture_format_BGRA8888"))
+    if (!extensionEnabled("GL_EXT_texture_format_BGRA8888") ||
+        (getClientMajorVersion() < 3 && !extensionEnabled("GL_EXT_texture_storage")))
     {
-        std::cout << "Test skipped due to missing GL_EXT_texture_format_BGRA8888." << std::endl;
+        std::cout << "Test skipped due to missing GL_EXT_texture_format_BGRA8888 or "
+                     "GL_EXT_texture_storage."
+                  << std::endl;
         return;
     }
 
@@ -211,9 +249,12 @@ TEST_P(FramebufferFormatsTest, BGRA8)
 
 TEST_P(FramebufferFormatsTest, RGBA8)
 {
-    if (getClientVersion() < 3 && !extensionEnabled("GL_OES_rgb8_rgba8"))
+    if (getClientMajorVersion() < 3 &&
+        (!extensionEnabled("GL_OES_rgb8_rgba8") || !extensionEnabled("GL_EXT_texture_storage")))
     {
-        std::cout << "Test skipped due to missing ES3 or GL_OES_rgb8_rgba8." << std::endl;
+        std::cout
+            << "Test skipped due to missing ES3 or GL_OES_rgb8_rgba8 and GL_EXT_texture_storage."
+            << std::endl;
         return;
     }
 
@@ -232,7 +273,7 @@ TEST_P(FramebufferFormatsTest, RenderbufferMultisample_DEPTH24)
 
 TEST_P(FramebufferFormatsTest, RenderbufferMultisample_DEPTH32F)
 {
-    if (getClientVersion() < 3)
+    if (getClientMajorVersion() < 3)
     {
         std::cout << "Test skipped due to missing ES3." << std::endl;
         return;
@@ -248,7 +289,7 @@ TEST_P(FramebufferFormatsTest, RenderbufferMultisample_DEPTH24_STENCIL8)
 
 TEST_P(FramebufferFormatsTest, RenderbufferMultisample_DEPTH32F_STENCIL8)
 {
-    if (getClientVersion() < 3)
+    if (getClientMajorVersion() < 3)
     {
         std::cout << "Test skipped due to missing ES3." << std::endl;
         return;
@@ -316,7 +357,7 @@ TEST_P(FramebufferFormatsTest, IncompleteCubeMap)
 // Test that a renderbuffer with zero height but nonzero width is handled without crashes/asserts.
 TEST_P(FramebufferFormatsTest, ZeroHeightRenderbuffer)
 {
-    if (getClientVersion() < 3)
+    if (getClientMajorVersion() < 3)
     {
         std::cout << "Test skipped due to missing ES3" << std::endl;
         return;
@@ -336,36 +377,19 @@ ANGLE_INSTANTIATE_TEST(FramebufferFormatsTest,
                        ES2_OPENGLES(),
                        ES3_OPENGLES());
 
-class FramebufferInvalidateTest : public ANGLETest
+class FramebufferTest_ES3 : public ANGLETest
 {
-  protected:
-    FramebufferInvalidateTest() : mFramebuffer(0), mRenderbuffer(0) {}
-
-    void SetUp() override
-    {
-        ANGLETest::SetUp();
-
-        glGenFramebuffers(1, &mFramebuffer);
-        glGenRenderbuffers(1, &mRenderbuffer);
-    }
-
-    void TearDown() override
-    {
-        glDeleteFramebuffers(1, &mFramebuffer);
-        glDeleteRenderbuffers(1, &mRenderbuffer);
-        ANGLETest::TearDown();
-    }
-
-    GLuint mFramebuffer;
-    GLuint mRenderbuffer;
 };
 
 // Covers invalidating an incomplete framebuffer. This should be a no-op, but should not error.
-TEST_P(FramebufferInvalidateTest, Incomplete)
+TEST_P(FramebufferTest_ES3, InvalidateIncomplete)
 {
-    glBindFramebuffer(GL_FRAMEBUFFER, mFramebuffer);
-    glBindRenderbuffer(GL_RENDERBUFFER, mRenderbuffer);
-    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, mRenderbuffer);
+    GLFramebuffer framebuffer;
+    GLRenderbuffer renderbuffer;
+
+    glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+    glBindRenderbuffer(GL_RENDERBUFFER, renderbuffer);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, renderbuffer);
     EXPECT_GLENUM_EQ(GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT,
                      glCheckFramebufferStatus(GL_FRAMEBUFFER));
 
@@ -376,4 +400,245 @@ TEST_P(FramebufferInvalidateTest, Incomplete)
     EXPECT_GL_NO_ERROR();
 }
 
-ANGLE_INSTANTIATE_TEST(FramebufferInvalidateTest, ES3_D3D11(), ES3_OPENGL(), ES3_OPENGLES());
+// Test that the framebuffer state tracking robustly handles a depth-only attachment being set
+// as a depth-stencil attachment. It is equivalent to detaching the depth-stencil attachment.
+TEST_P(FramebufferTest_ES3, DepthOnlyAsDepthStencil)
+{
+    GLFramebuffer framebuffer;
+    GLRenderbuffer renderbuffer;
+
+    glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+    glBindRenderbuffer(GL_RENDERBUFFER, renderbuffer);
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT16, 4, 4);
+
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER,
+                              renderbuffer);
+    EXPECT_GLENUM_NE(GL_FRAMEBUFFER_COMPLETE, glCheckFramebufferStatus(GL_FRAMEBUFFER));
+}
+
+// Test that the framebuffer correctly returns that it is not complete if invalid texture mip levels
+// are bound
+TEST_P(FramebufferTest_ES3, TextureAttachmentMipLevels)
+{
+    GLFramebuffer framebuffer;
+    glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+
+    GLTexture texture;
+    glBindTexture(GL_TEXTURE_2D, texture);
+
+    // Create a complete mip chain in mips 1 to 3
+    glTexImage2D(GL_TEXTURE_2D, 1, GL_RGBA8, 4, 4, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    glTexImage2D(GL_TEXTURE_2D, 2, GL_RGBA8, 2, 2, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    glTexImage2D(GL_TEXTURE_2D, 3, GL_RGBA8, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+
+    // Create another complete mip chain in mips 4 to 5
+    glTexImage2D(GL_TEXTURE_2D, 4, GL_RGBA8, 2, 2, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    glTexImage2D(GL_TEXTURE_2D, 5, GL_RGBA8, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+
+    // Create a non-complete mip chain in mip 6
+    glTexImage2D(GL_TEXTURE_2D, 6, GL_RGBA8, 2, 2, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+
+    // Incomplete, mipLevel != baseLevel and texture is not mip complete
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, 1);
+    EXPECT_GLENUM_EQ(GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT,
+                     glCheckFramebufferStatus(GL_FRAMEBUFFER));
+
+    // Complete, mipLevel == baseLevel
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 1);
+    ExpectFramebufferCompleteOrUnsupported(GL_FRAMEBUFFER);
+
+    // Complete, mipLevel != baseLevel but texture is now mip complete
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, 2);
+    ExpectFramebufferCompleteOrUnsupported(GL_FRAMEBUFFER);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, 3);
+    ExpectFramebufferCompleteOrUnsupported(GL_FRAMEBUFFER);
+
+    // Incomplete, attached level below the base level
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 2);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, 1);
+    EXPECT_GLENUM_EQ(GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT,
+                     glCheckFramebufferStatus(GL_FRAMEBUFFER));
+
+    // Incomplete, attached level is beyond effective max level
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, 4);
+    EXPECT_GLENUM_EQ(GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT,
+                     glCheckFramebufferStatus(GL_FRAMEBUFFER));
+
+    // Complete, mipLevel == baseLevel
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 4);
+    ExpectFramebufferCompleteOrUnsupported(GL_FRAMEBUFFER);
+
+    // Complete, mipLevel != baseLevel but texture is now mip complete
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, 5);
+    ExpectFramebufferCompleteOrUnsupported(GL_FRAMEBUFFER);
+
+    // Complete, mipLevel == baseLevel
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 6);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, 6);
+    ExpectFramebufferCompleteOrUnsupported(GL_FRAMEBUFFER);
+}
+
+// Test that passing an attachment COLOR_ATTACHMENTm where m is equal to MAX_COLOR_ATTACHMENTS
+// generates an INVALID_OPERATION.
+// OpenGL ES Version 3.0.5 (November 3, 2016), 4.4.2.4 Attaching Texture Images to a Framebuffer, p.
+// 208
+TEST_P(FramebufferTest_ES3, ColorAttachmentIndexOutOfBounds)
+{
+    GLFramebuffer framebuffer;
+    glBindFramebuffer(GL_FRAMEBUFFER, framebuffer.get());
+
+    GLint maxColorAttachments = 0;
+    glGetIntegerv(GL_MAX_COLOR_ATTACHMENTS, &maxColorAttachments);
+    GLenum attachment = static_cast<GLenum>(maxColorAttachments + GL_COLOR_ATTACHMENT0);
+
+    GLTexture texture;
+    glBindTexture(GL_TEXTURE_2D, texture.get());
+    glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA32F, 1, 1);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, attachment, GL_TEXTURE_2D, texture.get(), 0);
+    EXPECT_GL_ERROR(GL_INVALID_OPERATION);
+}
+
+// Check that depth-only attachments report the correct number of samples.
+TEST_P(FramebufferTest_ES3, MultisampleDepthOnly)
+{
+    GLRenderbuffer renderbuffer;
+    glBindRenderbuffer(GL_RENDERBUFFER, renderbuffer);
+    glRenderbufferStorageMultisample(GL_RENDERBUFFER, 2, GL_DEPTH_COMPONENT24, 32, 32);
+
+    GLFramebuffer framebuffer;
+    glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, renderbuffer);
+    ASSERT_GLENUM_EQ(GL_FRAMEBUFFER_COMPLETE, glCheckFramebufferStatus(GL_FRAMEBUFFER));
+    EXPECT_GL_NO_ERROR();
+
+    GLint samples = 0;
+    glGetIntegerv(GL_SAMPLES, &samples);
+    EXPECT_GL_NO_ERROR();
+    EXPECT_GE(samples, 2);
+}
+
+ANGLE_INSTANTIATE_TEST(FramebufferTest_ES3, ES3_D3D11(), ES3_OPENGL(), ES3_OPENGLES());
+
+class FramebufferTest_ES31 : public ANGLETest
+{
+};
+
+// Test that without attachment, if either the value of FRAMEBUFFER_DEFAULT_WIDTH or
+// FRAMEBUFFER_DEFAULT_HEIGHT parameters is zero, the framebuffer is incomplete.
+TEST_P(FramebufferTest_ES31, IncompleteMissingAttachmentDefaultParam)
+{
+    GLFramebuffer mFramebuffer;
+    glBindFramebuffer(GL_FRAMEBUFFER, mFramebuffer.get());
+
+    glFramebufferParameteri(GL_FRAMEBUFFER, GL_FRAMEBUFFER_DEFAULT_WIDTH, 1);
+    glFramebufferParameteri(GL_FRAMEBUFFER, GL_FRAMEBUFFER_DEFAULT_HEIGHT, 1);
+    EXPECT_GLENUM_EQ(GL_FRAMEBUFFER_COMPLETE, glCheckFramebufferStatus(GL_FRAMEBUFFER));
+
+    glFramebufferParameteri(GL_FRAMEBUFFER, GL_FRAMEBUFFER_DEFAULT_WIDTH, 0);
+    glFramebufferParameteri(GL_FRAMEBUFFER, GL_FRAMEBUFFER_DEFAULT_HEIGHT, 0);
+    EXPECT_GLENUM_EQ(GL_FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT,
+                     glCheckFramebufferStatus(GL_FRAMEBUFFER));
+
+    glFramebufferParameteri(GL_FRAMEBUFFER, GL_FRAMEBUFFER_DEFAULT_WIDTH, 1);
+    glFramebufferParameteri(GL_FRAMEBUFFER, GL_FRAMEBUFFER_DEFAULT_HEIGHT, 0);
+    EXPECT_GLENUM_EQ(GL_FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT,
+                     glCheckFramebufferStatus(GL_FRAMEBUFFER));
+
+    glFramebufferParameteri(GL_FRAMEBUFFER, GL_FRAMEBUFFER_DEFAULT_WIDTH, 0);
+    glFramebufferParameteri(GL_FRAMEBUFFER, GL_FRAMEBUFFER_DEFAULT_HEIGHT, 1);
+    EXPECT_GLENUM_EQ(GL_FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT,
+                     glCheckFramebufferStatus(GL_FRAMEBUFFER));
+
+    ASSERT_GL_NO_ERROR();
+}
+
+// Test that the sample count of a mix of texture and renderbuffer should be same.
+TEST_P(FramebufferTest_ES31, IncompleteMultisampleSampleCountMix)
+{
+    GLFramebuffer mFramebuffer;
+    glBindFramebuffer(GL_FRAMEBUFFER, mFramebuffer.get());
+
+    GLTexture mTexture;
+    glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, mTexture.get());
+    glTexStorage2DMultisample(GL_TEXTURE_2D_MULTISAMPLE, 1, GL_RGBA8, 1, 1, true);
+
+    GLRenderbuffer mRenderbuffer;
+    glBindRenderbuffer(GL_RENDERBUFFER, mRenderbuffer.get());
+    glRenderbufferStorageMultisample(GL_RENDERBUFFER, 2, GL_RGBA8, 1, 1);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D_MULTISAMPLE,
+                           mTexture.get(), 0);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_RENDERBUFFER,
+                              mRenderbuffer.get());
+    EXPECT_GLENUM_EQ(GL_FRAMEBUFFER_INCOMPLETE_MULTISAMPLE,
+                     glCheckFramebufferStatus(GL_FRAMEBUFFER));
+
+    ASSERT_GL_NO_ERROR();
+}
+
+// Test that the sample count of texture attachments should be same.
+TEST_P(FramebufferTest_ES31, IncompleteMultisampleSampleCountTex)
+{
+    GLFramebuffer mFramebuffer;
+    glBindFramebuffer(GL_FRAMEBUFFER, mFramebuffer.get());
+
+    GLTexture mTextures[2];
+    glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, mTextures[0].get());
+    glTexStorage2DMultisample(GL_TEXTURE_2D_MULTISAMPLE, 1, GL_RGBA8, 1, 1, true);
+    glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, mTextures[1].get());
+    glTexStorage2DMultisample(GL_TEXTURE_2D_MULTISAMPLE, 2, GL_RGBA8, 1, 1, true);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D_MULTISAMPLE,
+                           mTextures[0].get(), 0);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D_MULTISAMPLE,
+                           mTextures[1].get(), 0);
+    EXPECT_GLENUM_EQ(GL_FRAMEBUFFER_INCOMPLETE_MULTISAMPLE,
+                     glCheckFramebufferStatus(GL_FRAMEBUFFER));
+
+    ASSERT_GL_NO_ERROR();
+}
+
+// Test that if the attached images are a mix of renderbuffers and textures, the value of
+// TEXTURE_FIXED_SAMPLE_LOCATIONS must be TRUE for all attached textures.
+TEST_P(FramebufferTest_ES31, IncompleteMultisampleFixedSampleLocationsMix)
+{
+    GLFramebuffer mFramebuffer;
+    glBindFramebuffer(GL_FRAMEBUFFER, mFramebuffer.get());
+
+    GLTexture mTexture;
+    glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, mTexture.get());
+    glTexStorage2DMultisample(GL_TEXTURE_2D_MULTISAMPLE, 1, GL_RGBA8, 1, 1, false);
+
+    GLRenderbuffer mRenderbuffer;
+    glBindRenderbuffer(GL_RENDERBUFFER, mRenderbuffer.get());
+    glRenderbufferStorageMultisample(GL_RENDERBUFFER, 1, GL_RGBA8, 1, 1);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D_MULTISAMPLE,
+                           mTexture.get(), 0);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_RENDERBUFFER,
+                              mRenderbuffer.get());
+    EXPECT_GLENUM_EQ(GL_FRAMEBUFFER_INCOMPLETE_MULTISAMPLE,
+                     glCheckFramebufferStatus(GL_FRAMEBUFFER));
+
+    ASSERT_GL_NO_ERROR();
+}
+
+// Test that the value of TEXTURE_FIXED_SAMPLE_LOCATIONS is the same for all attached textures.
+TEST_P(FramebufferTest_ES31, IncompleteMultisampleFixedSampleLocationsTex)
+{
+    GLFramebuffer mFramebuffer;
+    glBindFramebuffer(GL_FRAMEBUFFER, mFramebuffer.get());
+
+    GLTexture mTextures[2];
+    glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, mTextures[0].get());
+    glTexStorage2DMultisample(GL_TEXTURE_2D_MULTISAMPLE, 1, GL_RGBA8, 1, 1, false);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D_MULTISAMPLE,
+                           mTextures[0].get(), 0);
+    glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, mTextures[1].get());
+    glTexStorage2DMultisample(GL_TEXTURE_2D_MULTISAMPLE, 1, GL_RGB8, 1, 1, true);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D_MULTISAMPLE,
+                           mTextures[1].get(), 0);
+    EXPECT_GLENUM_EQ(GL_FRAMEBUFFER_INCOMPLETE_MULTISAMPLE,
+                     glCheckFramebufferStatus(GL_FRAMEBUFFER));
+
+    ASSERT_GL_NO_ERROR();
+}
+
+ANGLE_INSTANTIATE_TEST(FramebufferTest_ES31, ES31_OPENGL(), ES31_OPENGLES());

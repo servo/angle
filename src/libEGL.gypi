@@ -5,10 +5,6 @@
 {
     # Everything below this is duplicated in the GN build. If you change
     # anything also change angle/BUILD.gn
-    'variables':
-    {
-        'angle_standalone%': 0,
-    },
     'targets':
     [
         {
@@ -16,12 +12,11 @@
             'type': '<(angle_gl_library_type)',
             'dependencies':
             [
-                'libANGLE',
                 'libGLESv2',
             ],
             'includes':
             [
-                '../build/common_defines.gypi',
+                '../gyp/common_defines.gypi',
             ],
             'include_dirs':
             [
@@ -38,7 +33,58 @@
                 {
                     'msvs_requires_importlibrary' : 'true',
                 }],
+                ['OS=="win"', {
+                    'defines':
+                    [
+                        'EGLAPI=',
+                    ],
+                }, {
+                    'defines':
+                    [
+                        'EGLAPI=__attribute__((visibility("default")))',
+                    ],
+                }],
+                ['OS == "mac"',
+                {
+                    'xcode_settings':
+                    {
+                        'DYLIB_INSTALL_NAME_BASE': '@rpath',
+                    },
+                }],
             ],
+        },
+
+        {
+            'target_name': 'libEGL_static',
+            'type': 'static_library',
+            'dependencies':
+            [
+                'libGLESv2_static',
+            ],
+            'includes':
+            [
+                '../gyp/common_defines.gypi',
+            ],
+            'include_dirs':
+            [
+                '.',
+                '../include',
+            ],
+            'sources':
+            [
+                '<@(libegl_sources)',
+            ],
+            'defines':
+            [
+                'EGLAPI=',
+            ],
+            'direct_dependent_settings':
+            {
+                'defines':
+                [
+                    'EGLAPI=',
+                ],
+            },
         },
     ],
 }

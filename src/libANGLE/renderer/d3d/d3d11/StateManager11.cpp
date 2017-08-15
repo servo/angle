@@ -8,12 +8,18 @@
 
 #include "libANGLE/renderer/d3d/d3d11/StateManager11.h"
 
-#include "common/BitSetIterator.h"
+#include "common/bitset_utils.h"
 #include "common/utilities.h"
+#include "libANGLE/Context.h"
 #include "libANGLE/Query.h"
+#include "libANGLE/VertexArray.h"
+#include "libANGLE/renderer/d3d/TextureD3D.h"
 #include "libANGLE/renderer/d3d/d3d11/Framebuffer11.h"
-#include "libANGLE/renderer/d3d/d3d11/Renderer11.h"
 #include "libANGLE/renderer/d3d/d3d11/RenderTarget11.h"
+#include "libANGLE/renderer/d3d/d3d11/Renderer11.h"
+#include "libANGLE/renderer/d3d/d3d11/ShaderExecutable11.h"
+#include "libANGLE/renderer/d3d/d3d11/TextureStorage11.h"
+#include "libANGLE/renderer/d3d/d3d11/VertexArray11.h"
 
 namespace rx
 {
@@ -23,15 +29,16 @@ namespace
 bool ImageIndexConflictsWithSRV(const gl::ImageIndex &index, D3D11_SHADER_RESOURCE_VIEW_DESC desc)
 {
     unsigned mipLevel   = index.mipIndex;
-    unsigned layerIndex = index.layerIndex;
+    GLint layerIndex    = index.layerIndex;
     GLenum type         = index.type;
 
     switch (desc.ViewDimension)
     {
         case D3D11_SRV_DIMENSION_TEXTURE2D:
         {
-            unsigned maxSrvMip = desc.Texture2D.MipLevels + desc.Texture2D.MostDetailedMip;
-            maxSrvMip          = (desc.Texture2D.MipLevels == -1) ? INT_MAX : maxSrvMip;
+            bool allLevels         = (desc.Texture2D.MipLevels == std::numeric_limits<UINT>::max());
+            unsigned int maxSrvMip = desc.Texture2D.MipLevels + desc.Texture2D.MostDetailedMip;
+            maxSrvMip              = allLevels ? INT_MAX : maxSrvMip;
 
             unsigned mipMin = index.mipIndex;
             unsigned mipMax = (layerIndex == -1) ? INT_MAX : layerIndex;
@@ -43,22 +50,25 @@ bool ImageIndexConflictsWithSRV(const gl::ImageIndex &index, D3D11_SHADER_RESOUR
 
         case D3D11_SRV_DIMENSION_TEXTURE2DARRAY:
         {
-            unsigned maxSrvMip =
+            bool allLevels = (desc.Texture2DArray.MipLevels == std::numeric_limits<UINT>::max());
+            unsigned int maxSrvMip =
                 desc.Texture2DArray.MipLevels + desc.Texture2DArray.MostDetailedMip;
-            maxSrvMip = (desc.Texture2DArray.MipLevels == -1) ? INT_MAX : maxSrvMip;
+            maxSrvMip = allLevels ? INT_MAX : maxSrvMip;
 
             unsigned maxSlice = desc.Texture2DArray.FirstArraySlice + desc.Texture2DArray.ArraySize;
 
             // Cube maps can be mapped to Texture2DArray SRVs
             return (type == GL_TEXTURE_2D_ARRAY || gl::IsCubeMapTextureTarget(type)) &&
                    desc.Texture2DArray.MostDetailedMip <= mipLevel && mipLevel < maxSrvMip &&
-                   desc.Texture2DArray.FirstArraySlice <= layerIndex && layerIndex < maxSlice;
+                   desc.Texture2DArray.FirstArraySlice <= static_cast<UINT>(layerIndex) &&
+                   static_cast<UINT>(layerIndex) < maxSlice;
         }
 
         case D3D11_SRV_DIMENSION_TEXTURECUBE:
         {
-            unsigned maxSrvMip = desc.TextureCube.MipLevels + desc.TextureCube.MostDetailedMip;
-            maxSrvMip          = (desc.TextureCube.MipLevels == -1) ? INT_MAX : maxSrvMip;
+            bool allLevels = (desc.TextureCube.MipLevels == std::numeric_limits<UINT>::max());
+            unsigned int maxSrvMip = desc.TextureCube.MipLevels + desc.TextureCube.MostDetailedMip;
+            maxSrvMip              = allLevels ? INT_MAX : maxSrvMip;
 
             return gl::IsCubeMapTextureTarget(type) &&
                    desc.TextureCube.MostDetailedMip <= mipLevel && mipLevel < maxSrvMip;
@@ -66,8 +76,9 @@ bool ImageIndexConflictsWithSRV(const gl::ImageIndex &index, D3D11_SHADER_RESOUR
 
         case D3D11_SRV_DIMENSION_TEXTURE3D:
         {
-            unsigned maxSrvMip = desc.Texture3D.MipLevels + desc.Texture3D.MostDetailedMip;
-            maxSrvMip          = (desc.Texture3D.MipLevels == -1) ? INT_MAX : maxSrvMip;
+            bool allLevels         = (desc.Texture3D.MipLevels == std::numeric_limits<UINT>::max());
+            unsigned int maxSrvMip = desc.Texture3D.MipLevels + desc.Texture3D.MostDetailedMip;
+            maxSrvMip              = allLevels ? INT_MAX : maxSrvMip;
 
             return type == GL_TEXTURE_3D && desc.Texture3D.MostDetailedMip <= mipLevel &&
                    mipLevel < maxSrvMip;
@@ -83,14 +94,32 @@ bool ImageIndexConflictsWithSRV(const gl::ImageIndex &index, D3D11_SHADER_RESOUR
 // Does *not* increment the resource ref count!!
 ID3D11Resource *GetViewResource(ID3D11View *view)
 {
-    ID3D11Resource *resource = NULL;
+    ID3D11Resource *resource = nullptr;
     ASSERT(view);
     view->GetResource(&resource);
     resource->Release();
     return resource;
 }
 
+int GetWrapBits(GLenum wrap)
+{
+    switch (wrap)
+    {
+        case GL_CLAMP_TO_EDGE:
+            return 0x1;
+        case GL_REPEAT:
+            return 0x2;
+        case GL_MIRRORED_REPEAT:
+            return 0x3;
+        default:
+            UNREACHABLE();
+            return 0;
+    }
+}
+
 }  // anonymous namespace
+
+// StateManager11::SRVCache Implementation.
 
 void StateManager11::SRVCache::update(size_t resourceIndex, ID3D11ShaderResourceView *srv)
 {
@@ -129,30 +158,136 @@ void StateManager11::SRVCache::clear()
     mHighestUsedSRV = 0;
 }
 
+// SamplerMetadataD3D11 implementation
+
+SamplerMetadata11::SamplerMetadata11() : mDirty(true)
+{
+}
+
+SamplerMetadata11::~SamplerMetadata11()
+{
+}
+
+void SamplerMetadata11::initData(unsigned int samplerCount)
+{
+    mSamplerMetadata.resize(samplerCount);
+}
+
+void SamplerMetadata11::update(unsigned int samplerIndex, const gl::Texture &texture)
+{
+    unsigned int baseLevel = texture.getTextureState().getEffectiveBaseLevel();
+    GLenum sizedFormat =
+        texture.getFormat(texture.getTarget(), baseLevel).info->sizedInternalFormat;
+    if (mSamplerMetadata[samplerIndex].baseLevel != static_cast<int>(baseLevel))
+    {
+        mSamplerMetadata[samplerIndex].baseLevel = static_cast<int>(baseLevel);
+        mDirty                                   = true;
+    }
+
+    // Some metadata is needed only for integer textures. We avoid updating the constant buffer
+    // unnecessarily by changing the data only in case the texture is an integer texture and
+    // the values have changed.
+    bool needIntegerTextureMetadata = false;
+    // internalFormatBits == 0 means a 32-bit texture in the case of integer textures.
+    int internalFormatBits = 0;
+    switch (sizedFormat)
+    {
+        case GL_RGBA32I:
+        case GL_RGBA32UI:
+        case GL_RGB32I:
+        case GL_RGB32UI:
+        case GL_RG32I:
+        case GL_RG32UI:
+        case GL_R32I:
+        case GL_R32UI:
+            needIntegerTextureMetadata = true;
+            break;
+        case GL_RGBA16I:
+        case GL_RGBA16UI:
+        case GL_RGB16I:
+        case GL_RGB16UI:
+        case GL_RG16I:
+        case GL_RG16UI:
+        case GL_R16I:
+        case GL_R16UI:
+            needIntegerTextureMetadata = true;
+            internalFormatBits         = 16;
+            break;
+        case GL_RGBA8I:
+        case GL_RGBA8UI:
+        case GL_RGB8I:
+        case GL_RGB8UI:
+        case GL_RG8I:
+        case GL_RG8UI:
+        case GL_R8I:
+        case GL_R8UI:
+            needIntegerTextureMetadata = true;
+            internalFormatBits         = 8;
+            break;
+        case GL_RGB10_A2UI:
+            needIntegerTextureMetadata = true;
+            internalFormatBits         = 10;
+            break;
+        default:
+            break;
+    }
+    if (needIntegerTextureMetadata)
+    {
+        if (mSamplerMetadata[samplerIndex].internalFormatBits != internalFormatBits)
+        {
+            mSamplerMetadata[samplerIndex].internalFormatBits = internalFormatBits;
+            mDirty                                            = true;
+        }
+        // Pack the wrap values into one integer so we can fit all the metadata in one 4-integer
+        // vector.
+        GLenum wrapS  = texture.getWrapS();
+        GLenum wrapT  = texture.getWrapT();
+        GLenum wrapR  = texture.getWrapR();
+        int wrapModes = GetWrapBits(wrapS) | (GetWrapBits(wrapT) << 2) | (GetWrapBits(wrapR) << 4);
+        if (mSamplerMetadata[samplerIndex].wrapModes != wrapModes)
+        {
+            mSamplerMetadata[samplerIndex].wrapModes = wrapModes;
+            mDirty                                   = true;
+        }
+    }
+}
+
+const SamplerMetadata11::dx_SamplerMetadata *SamplerMetadata11::getData() const
+{
+    return mSamplerMetadata.data();
+}
+
+size_t SamplerMetadata11::sizeBytes() const
+{
+    return sizeof(dx_SamplerMetadata) * mSamplerMetadata.size();
+}
+
 static const GLenum QueryTypes[] = {GL_ANY_SAMPLES_PASSED, GL_ANY_SAMPLES_PASSED_CONSERVATIVE,
-                                    GL_TRANSFORM_FEEDBACK_PRIMITIVES_WRITTEN, GL_TIME_ELAPSED_EXT};
+                                    GL_TRANSFORM_FEEDBACK_PRIMITIVES_WRITTEN, GL_TIME_ELAPSED_EXT,
+                                    GL_COMMANDS_COMPLETED_CHROMIUM};
 
 StateManager11::StateManager11(Renderer11 *renderer)
     : mRenderer(renderer),
-      mBlendStateIsDirty(false),
+      mInternalDirtyBits(),
       mCurBlendColor(0, 0, 0, 0),
       mCurSampleMask(0),
-      mDepthStencilStateIsDirty(false),
       mCurStencilRef(0),
       mCurStencilBackRef(0),
       mCurStencilSize(0),
-      mRasterizerStateIsDirty(false),
-      mScissorStateIsDirty(false),
       mCurScissorEnabled(false),
       mCurScissorRect(),
-      mViewportStateIsDirty(false),
       mCurViewport(),
       mCurNear(0.0f),
       mCurFar(0.0f),
       mViewportBounds(),
-      mRenderTargetIsDirty(false),
+      mCurPresentPathFastEnabled(false),
+      mCurPresentPathFastColorBufferHeight(0),
       mDirtyCurrentValueAttribs(),
-      mCurrentValueAttribs()
+      mCurrentValueAttribs(),
+      mCurrentInputLayout(),
+      mInputLayoutIsDirty(false),
+      mDirtyVertexBufferRange(gl::MAX_VERTEX_ATTRIBS, 0),
+      mCurrentPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_UNDEFINED)
 {
     mCurBlendState.blend                 = false;
     mCurBlendState.sourceBlendRGB        = GL_ONE;
@@ -196,6 +331,10 @@ StateManager11::StateManager11(Renderer11 *renderer)
 
     // Initially all current value attributes must be updated on first use.
     mDirtyCurrentValueAttribs.flip();
+
+    mCurrentVertexBuffers.fill(nullptr);
+    mCurrentVertexStrides.fill(std::numeric_limits<UINT>::max());
+    mCurrentVertexOffsets.fill(std::numeric_limits<UINT>::max());
 }
 
 StateManager11::~StateManager11()
@@ -207,46 +346,64 @@ void StateManager11::updateStencilSizeIfChanged(bool depthStencilInitialized,
 {
     if (!depthStencilInitialized || stencilSize != mCurStencilSize)
     {
-        mCurStencilSize           = stencilSize;
-        mDepthStencilStateIsDirty = true;
+        mCurStencilSize = stencilSize;
+        mInternalDirtyBits.set(DIRTY_BIT_DEPTH_STENCIL_STATE);
     }
 }
 
-void StateManager11::setViewportBounds(const int width, const int height)
+void StateManager11::checkPresentPath(const gl::Context *context)
 {
-    if (mRenderer->getRenderer11DeviceCaps().featureLevel <= D3D_FEATURE_LEVEL_9_3 &&
-        (mViewportBounds.width != width || mViewportBounds.height != height))
-    {
-        mViewportBounds       = gl::Extents(width, height, 1);
-        mViewportStateIsDirty = true;
-    }
-}
+    if (!mRenderer->presentPathFastEnabled())
+        return;
 
-void StateManager11::updatePresentPath(bool presentPathFastActive,
-                                       const gl::FramebufferAttachment *framebufferAttachment)
-{
-    const int colorBufferHeight =
-        framebufferAttachment ? framebufferAttachment->getSize().height : 0;
+    const auto *framebuffer          = context->getGLState().getDrawFramebuffer();
+    const auto *firstColorAttachment = framebuffer->getFirstColorbuffer();
+    const bool presentPathFastActive = UsePresentPathFast(mRenderer, firstColorAttachment);
+
+    const int colorBufferHeight = firstColorAttachment ? firstColorAttachment->getSize().height : 0;
 
     if ((mCurPresentPathFastEnabled != presentPathFastActive) ||
         (presentPathFastActive && (colorBufferHeight != mCurPresentPathFastColorBufferHeight)))
     {
         mCurPresentPathFastEnabled           = presentPathFastActive;
         mCurPresentPathFastColorBufferHeight = colorBufferHeight;
-        mViewportStateIsDirty                = true;  // Viewport may need to be vertically inverted
-        mScissorStateIsDirty                 = true;  // Scissor rect may need to be vertically inverted
-        mRasterizerStateIsDirty              = true;  // Cull Mode may need to be inverted
+
+        // Scissor rect may need to be vertically inverted
+        mInternalDirtyBits.set(DIRTY_BIT_SCISSOR_STATE);
+
+        // Cull Mode may need to be inverted
+        mInternalDirtyBits.set(DIRTY_BIT_RASTERIZER_STATE);
+
+        // Viewport may need to be vertically inverted
+        mInternalDirtyBits.set(DIRTY_BIT_VIEWPORT_STATE);
     }
 }
 
-void StateManager11::syncState(const gl::State &state, const gl::State::DirtyBits &dirtyBits)
+gl::Error StateManager11::updateStateForCompute(const gl::Context *context,
+                                                GLuint numGroupsX,
+                                                GLuint numGroupsY,
+                                                GLuint numGroupsZ)
+{
+    mComputeConstants.numWorkGroups[0] = numGroupsX;
+    mComputeConstants.numWorkGroups[1] = numGroupsY;
+    mComputeConstants.numWorkGroups[2] = numGroupsZ;
+
+    // TODO(jmadill): More complete implementation.
+    ANGLE_TRY(syncTextures(context));
+
+    return gl::NoError();
+}
+
+void StateManager11::syncState(const gl::Context *context, const gl::State::DirtyBits &dirtyBits)
 {
     if (!dirtyBits.any())
     {
         return;
     }
 
-    for (auto dirtyBit : angle::IterateBitSet(dirtyBits))
+    const auto &state = context->getGLState();
+
+    for (auto dirtyBit : dirtyBits)
     {
         switch (dirtyBit)
         {
@@ -256,7 +413,7 @@ void StateManager11::syncState(const gl::State &state, const gl::State::DirtyBit
                 if (blendState.blendEquationRGB != mCurBlendState.blendEquationRGB ||
                     blendState.blendEquationAlpha != mCurBlendState.blendEquationAlpha)
                 {
-                    mBlendStateIsDirty = true;
+                    mInternalDirtyBits.set(DIRTY_BIT_BLEND_STATE);
                 }
                 break;
             }
@@ -268,27 +425,27 @@ void StateManager11::syncState(const gl::State &state, const gl::State::DirtyBit
                     blendState.sourceBlendAlpha != mCurBlendState.sourceBlendAlpha ||
                     blendState.destBlendAlpha != mCurBlendState.destBlendAlpha)
                 {
-                    mBlendStateIsDirty = true;
+                    mInternalDirtyBits.set(DIRTY_BIT_BLEND_STATE);
                 }
                 break;
             }
             case gl::State::DIRTY_BIT_BLEND_ENABLED:
                 if (state.getBlendState().blend != mCurBlendState.blend)
                 {
-                    mBlendStateIsDirty = true;
+                    mInternalDirtyBits.set(DIRTY_BIT_BLEND_STATE);
                 }
                 break;
             case gl::State::DIRTY_BIT_SAMPLE_ALPHA_TO_COVERAGE_ENABLED:
                 if (state.getBlendState().sampleAlphaToCoverage !=
                     mCurBlendState.sampleAlphaToCoverage)
                 {
-                    mBlendStateIsDirty = true;
+                    mInternalDirtyBits.set(DIRTY_BIT_BLEND_STATE);
                 }
                 break;
             case gl::State::DIRTY_BIT_DITHER_ENABLED:
                 if (state.getBlendState().dither != mCurBlendState.dither)
                 {
-                    mBlendStateIsDirty = true;
+                    mInternalDirtyBits.set(DIRTY_BIT_BLEND_STATE);
                 }
                 break;
             case gl::State::DIRTY_BIT_COLOR_MASK:
@@ -299,38 +456,38 @@ void StateManager11::syncState(const gl::State &state, const gl::State::DirtyBit
                     blendState.colorMaskBlue != mCurBlendState.colorMaskBlue ||
                     blendState.colorMaskAlpha != mCurBlendState.colorMaskAlpha)
                 {
-                    mBlendStateIsDirty = true;
+                    mInternalDirtyBits.set(DIRTY_BIT_BLEND_STATE);
                 }
                 break;
             }
             case gl::State::DIRTY_BIT_BLEND_COLOR:
                 if (state.getBlendColor() != mCurBlendColor)
                 {
-                    mBlendStateIsDirty = true;
+                    mInternalDirtyBits.set(DIRTY_BIT_BLEND_STATE);
                 }
                 break;
             case gl::State::DIRTY_BIT_DEPTH_MASK:
                 if (state.getDepthStencilState().depthMask != mCurDepthStencilState.depthMask)
                 {
-                    mDepthStencilStateIsDirty = true;
+                    mInternalDirtyBits.set(DIRTY_BIT_DEPTH_STENCIL_STATE);
                 }
                 break;
             case gl::State::DIRTY_BIT_DEPTH_TEST_ENABLED:
                 if (state.getDepthStencilState().depthTest != mCurDepthStencilState.depthTest)
                 {
-                    mDepthStencilStateIsDirty = true;
+                    mInternalDirtyBits.set(DIRTY_BIT_DEPTH_STENCIL_STATE);
                 }
                 break;
             case gl::State::DIRTY_BIT_DEPTH_FUNC:
                 if (state.getDepthStencilState().depthFunc != mCurDepthStencilState.depthFunc)
                 {
-                    mDepthStencilStateIsDirty = true;
+                    mInternalDirtyBits.set(DIRTY_BIT_DEPTH_STENCIL_STATE);
                 }
                 break;
             case gl::State::DIRTY_BIT_STENCIL_TEST_ENABLED:
                 if (state.getDepthStencilState().stencilTest != mCurDepthStencilState.stencilTest)
                 {
-                    mDepthStencilStateIsDirty = true;
+                    mInternalDirtyBits.set(DIRTY_BIT_DEPTH_STENCIL_STATE);
                 }
                 break;
             case gl::State::DIRTY_BIT_STENCIL_FUNCS_FRONT:
@@ -340,7 +497,7 @@ void StateManager11::syncState(const gl::State &state, const gl::State::DirtyBit
                     depthStencil.stencilMask != mCurDepthStencilState.stencilMask ||
                     state.getStencilRef() != mCurStencilRef)
                 {
-                    mDepthStencilStateIsDirty = true;
+                    mInternalDirtyBits.set(DIRTY_BIT_DEPTH_STENCIL_STATE);
                 }
                 break;
             }
@@ -351,7 +508,7 @@ void StateManager11::syncState(const gl::State &state, const gl::State::DirtyBit
                     depthStencil.stencilBackMask != mCurDepthStencilState.stencilBackMask ||
                     state.getStencilBackRef() != mCurStencilBackRef)
                 {
-                    mDepthStencilStateIsDirty = true;
+                    mInternalDirtyBits.set(DIRTY_BIT_DEPTH_STENCIL_STATE);
                 }
                 break;
             }
@@ -359,14 +516,14 @@ void StateManager11::syncState(const gl::State &state, const gl::State::DirtyBit
                 if (state.getDepthStencilState().stencilWritemask !=
                     mCurDepthStencilState.stencilWritemask)
                 {
-                    mDepthStencilStateIsDirty = true;
+                    mInternalDirtyBits.set(DIRTY_BIT_DEPTH_STENCIL_STATE);
                 }
                 break;
             case gl::State::DIRTY_BIT_STENCIL_WRITEMASK_BACK:
                 if (state.getDepthStencilState().stencilBackWritemask !=
                     mCurDepthStencilState.stencilBackWritemask)
                 {
-                    mDepthStencilStateIsDirty = true;
+                    mInternalDirtyBits.set(DIRTY_BIT_DEPTH_STENCIL_STATE);
                 }
                 break;
             case gl::State::DIRTY_BIT_STENCIL_OPS_FRONT:
@@ -377,7 +534,7 @@ void StateManager11::syncState(const gl::State &state, const gl::State::DirtyBit
                         mCurDepthStencilState.stencilPassDepthFail ||
                     depthStencil.stencilPassDepthPass != mCurDepthStencilState.stencilPassDepthPass)
                 {
-                    mDepthStencilStateIsDirty = true;
+                    mInternalDirtyBits.set(DIRTY_BIT_DEPTH_STENCIL_STATE);
                 }
                 break;
             }
@@ -390,33 +547,33 @@ void StateManager11::syncState(const gl::State &state, const gl::State::DirtyBit
                     depthStencil.stencilBackPassDepthPass !=
                         mCurDepthStencilState.stencilBackPassDepthPass)
                 {
-                    mDepthStencilStateIsDirty = true;
+                    mInternalDirtyBits.set(DIRTY_BIT_DEPTH_STENCIL_STATE);
                 }
                 break;
             }
             case gl::State::DIRTY_BIT_CULL_FACE_ENABLED:
                 if (state.getRasterizerState().cullFace != mCurRasterState.cullFace)
                 {
-                    mRasterizerStateIsDirty = true;
+                    mInternalDirtyBits.set(DIRTY_BIT_RASTERIZER_STATE);
                 }
                 break;
             case gl::State::DIRTY_BIT_CULL_FACE:
                 if (state.getRasterizerState().cullMode != mCurRasterState.cullMode)
                 {
-                    mRasterizerStateIsDirty = true;
+                    mInternalDirtyBits.set(DIRTY_BIT_RASTERIZER_STATE);
                 }
                 break;
             case gl::State::DIRTY_BIT_FRONT_FACE:
                 if (state.getRasterizerState().frontFace != mCurRasterState.frontFace)
                 {
-                    mRasterizerStateIsDirty = true;
+                    mInternalDirtyBits.set(DIRTY_BIT_RASTERIZER_STATE);
                 }
                 break;
             case gl::State::DIRTY_BIT_POLYGON_OFFSET_FILL_ENABLED:
                 if (state.getRasterizerState().polygonOffsetFill !=
                     mCurRasterState.polygonOffsetFill)
                 {
-                    mRasterizerStateIsDirty = true;
+                    mInternalDirtyBits.set(DIRTY_BIT_RASTERIZER_STATE);
                 }
                 break;
             case gl::State::DIRTY_BIT_POLYGON_OFFSET:
@@ -425,7 +582,7 @@ void StateManager11::syncState(const gl::State &state, const gl::State::DirtyBit
                 if (rasterState.polygonOffsetFactor != mCurRasterState.polygonOffsetFactor ||
                     rasterState.polygonOffsetUnits != mCurRasterState.polygonOffsetUnits)
                 {
-                    mRasterizerStateIsDirty = true;
+                    mInternalDirtyBits.set(DIRTY_BIT_RASTERIZER_STATE);
                 }
                 break;
             }
@@ -433,37 +590,41 @@ void StateManager11::syncState(const gl::State &state, const gl::State::DirtyBit
                 if (state.getRasterizerState().rasterizerDiscard !=
                     mCurRasterState.rasterizerDiscard)
                 {
-                    mRasterizerStateIsDirty = true;
+                    mInternalDirtyBits.set(DIRTY_BIT_RASTERIZER_STATE);
                 }
                 break;
             case gl::State::DIRTY_BIT_SCISSOR:
                 if (state.getScissor() != mCurScissorRect)
                 {
-                    mScissorStateIsDirty = true;
+                    mInternalDirtyBits.set(DIRTY_BIT_SCISSOR_STATE);
                 }
                 break;
             case gl::State::DIRTY_BIT_SCISSOR_TEST_ENABLED:
                 if (state.isScissorTestEnabled() != mCurScissorEnabled)
                 {
-                    mScissorStateIsDirty = true;
+                    mInternalDirtyBits.set(DIRTY_BIT_SCISSOR_STATE);
                     // Rasterizer state update needs mCurScissorsEnabled and updates when it changes
-                    mRasterizerStateIsDirty = true;
+                    mInternalDirtyBits.set(DIRTY_BIT_RASTERIZER_STATE);
                 }
                 break;
             case gl::State::DIRTY_BIT_DEPTH_RANGE:
                 if (state.getNearPlane() != mCurNear || state.getFarPlane() != mCurFar)
                 {
-                    mViewportStateIsDirty = true;
+                    mInternalDirtyBits.set(DIRTY_BIT_VIEWPORT_STATE);
                 }
                 break;
             case gl::State::DIRTY_BIT_VIEWPORT:
                 if (state.getViewport() != mCurViewport)
                 {
-                    mViewportStateIsDirty = true;
+                    mInternalDirtyBits.set(DIRTY_BIT_VIEWPORT_STATE);
                 }
                 break;
             case gl::State::DIRTY_BIT_DRAW_FRAMEBUFFER_BINDING:
-                mRenderTargetIsDirty = true;
+                invalidateRenderTarget(context);
+                break;
+            case gl::State::DIRTY_BIT_PROGRAM_EXECUTABLE:
+                invalidateVertexBuffer();
+                invalidateRenderTarget(context);
                 break;
             default:
                 if (dirtyBit >= gl::State::DIRTY_BIT_CURRENT_VALUE_0 &&
@@ -476,25 +637,21 @@ void StateManager11::syncState(const gl::State &state, const gl::State::DirtyBit
                 break;
         }
     }
+
+    // TODO(jmadill): Input layout and vertex buffer state.
 }
 
-gl::Error StateManager11::setBlendState(const gl::Framebuffer *framebuffer,
-                                        const gl::BlendState &blendState,
-                                        const gl::ColorF &blendColor,
-                                        unsigned int sampleMask)
+gl::Error StateManager11::syncBlendState(const gl::Context *context,
+                                         const gl::Framebuffer *framebuffer,
+                                         const gl::BlendState &blendState,
+                                         const gl::ColorF &blendColor,
+                                         unsigned int sampleMask)
 {
-    if (!mBlendStateIsDirty && sampleMask == mCurSampleMask)
-    {
-        return gl::Error(GL_NO_ERROR);
-    }
-
     ID3D11BlendState *dxBlendState = nullptr;
-    gl::Error error =
-        mRenderer->getStateCache().getBlendState(framebuffer, blendState, &dxBlendState);
-    if (error.isError())
-    {
-        return error;
-    }
+    const d3d11::BlendStateKey &key =
+        RenderStateCache::GetBlendStateKey(context, framebuffer, blendState);
+
+    ANGLE_TRY(mRenderer->getBlendState(key, &dxBlendState));
 
     ASSERT(dxBlendState != nullptr);
 
@@ -523,56 +680,47 @@ gl::Error StateManager11::setBlendState(const gl::Framebuffer *framebuffer,
     mCurBlendColor = blendColor;
     mCurSampleMask = sampleMask;
 
-    mBlendStateIsDirty = false;
-
-    return error;
+    return gl::NoError();
 }
 
-gl::Error StateManager11::setDepthStencilState(const gl::State &glState)
+gl::Error StateManager11::syncDepthStencilState(const gl::State &glState)
 {
-    const auto &fbo = *glState.getDrawFramebuffer();
-
-    // Disable the depth test/depth write if we are using a stencil-only attachment.
-    // This is because ANGLE emulates stencil-only with D24S8 on D3D11 - we should neither read
-    // nor write to the unused depth part of this emulated texture.
-    bool disableDepth = (!fbo.hasDepth() && fbo.hasStencil());
-
-    // Similarly we disable the stencil portion of the DS attachment if the app only binds depth.
-    bool disableStencil = (fbo.hasDepth() && !fbo.hasStencil());
-
-    // CurDisableDepth/Stencil are reset automatically after we call forceSetDepthStencilState.
-    if (!mDepthStencilStateIsDirty && mCurDisableDepth.valid() &&
-        disableDepth == mCurDisableDepth.value() && mCurDisableStencil.valid() &&
-        disableStencil == mCurDisableStencil.value())
-    {
-        return gl::Error(GL_NO_ERROR);
-    }
-
-    const auto &depthStencilState = glState.getDepthStencilState();
-    int stencilRef                = glState.getStencilRef();
-    int stencilBackRef            = glState.getStencilBackRef();
+    mCurDepthStencilState = glState.getDepthStencilState();
+    mCurStencilRef        = glState.getStencilRef();
+    mCurStencilBackRef    = glState.getStencilBackRef();
 
     // get the maximum size of the stencil ref
     unsigned int maxStencil = 0;
-    if (depthStencilState.stencilTest && mCurStencilSize > 0)
+    if (mCurDepthStencilState.stencilTest && mCurStencilSize > 0)
     {
         maxStencil = (1 << mCurStencilSize) - 1;
     }
-    ASSERT((depthStencilState.stencilWritemask & maxStencil) ==
-           (depthStencilState.stencilBackWritemask & maxStencil));
-    ASSERT(stencilRef == stencilBackRef);
-    ASSERT((depthStencilState.stencilMask & maxStencil) ==
-           (depthStencilState.stencilBackMask & maxStencil));
+    ASSERT((mCurDepthStencilState.stencilWritemask & maxStencil) ==
+           (mCurDepthStencilState.stencilBackWritemask & maxStencil));
+    ASSERT(mCurStencilRef == mCurStencilBackRef);
+    ASSERT((mCurDepthStencilState.stencilMask & maxStencil) ==
+           (mCurDepthStencilState.stencilBackMask & maxStencil));
 
-    ID3D11DepthStencilState *dxDepthStencilState = NULL;
-    gl::Error error = mRenderer->getStateCache().getDepthStencilState(
-        depthStencilState, disableDepth, disableStencil, &dxDepthStencilState);
-    if (error.isError())
+    gl::DepthStencilState modifiedGLState = glState.getDepthStencilState();
+
+    ASSERT(mCurDisableDepth.valid() && mCurDisableStencil.valid());
+
+    if (mCurDisableDepth.value())
     {
-        return error;
+        modifiedGLState.depthTest = false;
+        modifiedGLState.depthMask = false;
     }
 
-    ASSERT(dxDepthStencilState);
+    if (mCurDisableStencil.value())
+    {
+        modifiedGLState.stencilWritemask     = 0;
+        modifiedGLState.stencilBackWritemask = 0;
+        modifiedGLState.stencilTest          = false;
+    }
+
+    ID3D11DepthStencilState *d3dState = nullptr;
+    ANGLE_TRY(mRenderer->getDepthStencilState(modifiedGLState, &d3dState));
+    ASSERT(d3dState);
 
     // Max D3D11 stencil reference value is 0xFF,
     // corresponding to the max 8 bits in a stencil buffer
@@ -582,32 +730,21 @@ gl::Error StateManager11::setDepthStencilState(const gl::State &glState)
                   "Unexpected value of D3D11_DEFAULT_STENCIL_READ_MASK");
     static_assert(D3D11_DEFAULT_STENCIL_WRITE_MASK == 0xFF,
                   "Unexpected value of D3D11_DEFAULT_STENCIL_WRITE_MASK");
-    UINT dxStencilRef = std::min<UINT>(stencilRef, 0xFFu);
+    UINT dxStencilRef = std::min<UINT>(mCurStencilRef, 0xFFu);
 
-    mRenderer->getDeviceContext()->OMSetDepthStencilState(dxDepthStencilState, dxStencilRef);
+    mRenderer->getDeviceContext()->OMSetDepthStencilState(d3dState, dxStencilRef);
 
-    mCurDepthStencilState = depthStencilState;
-    mCurStencilRef        = stencilRef;
-    mCurStencilBackRef    = stencilBackRef;
-    mCurDisableDepth      = disableDepth;
-    mCurDisableStencil    = disableStencil;
-
-    mDepthStencilStateIsDirty = false;
-
-    return gl::Error(GL_NO_ERROR);
+    return gl::NoError();
 }
 
-gl::Error StateManager11::setRasterizerState(const gl::RasterizerState &rasterState)
+gl::Error StateManager11::syncRasterizerState(const gl::Context *context, bool pointDrawMode)
 {
     // TODO: Remove pointDrawMode and multiSample from gl::RasterizerState.
-    if (!mRasterizerStateIsDirty && rasterState.pointDrawMode == mCurRasterState.pointDrawMode &&
-        rasterState.multiSample == mCurRasterState.multiSample)
-    {
-        return gl::Error(GL_NO_ERROR);
-    }
+    gl::RasterizerState rasterState = context->getGLState().getRasterizerState();
+    rasterState.pointDrawMode       = pointDrawMode;
+    rasterState.multiSample         = mCurRasterState.multiSample;
 
     ID3D11RasterizerState *dxRasterState = nullptr;
-    gl::Error error(GL_NO_ERROR);
 
     if (mCurPresentPathFastEnabled)
     {
@@ -626,33 +763,23 @@ gl::Error StateManager11::setRasterizerState(const gl::RasterizerState &rasterSt
             modifiedRasterState.frontFace = GL_CCW;
         }
 
-        error = mRenderer->getStateCache().getRasterizerState(modifiedRasterState,
-                                                              mCurScissorEnabled, &dxRasterState);
+        ANGLE_TRY(
+            mRenderer->getRasterizerState(modifiedRasterState, mCurScissorEnabled, &dxRasterState));
     }
     else
     {
-        error = mRenderer->getStateCache().getRasterizerState(rasterState, mCurScissorEnabled,
-                                                              &dxRasterState);
-    }
-
-    if (error.isError())
-    {
-        return error;
+        ANGLE_TRY(mRenderer->getRasterizerState(rasterState, mCurScissorEnabled, &dxRasterState));
     }
 
     mRenderer->getDeviceContext()->RSSetState(dxRasterState);
 
-    mCurRasterState         = rasterState;
-    mRasterizerStateIsDirty = false;
+    mCurRasterState = rasterState;
 
-    return error;
+    return gl::NoError();
 }
 
-void StateManager11::setScissorRectangle(const gl::Rectangle &scissor, bool enabled)
+void StateManager11::syncScissorRectangle(const gl::Rectangle &scissor, bool enabled)
 {
-    if (!mScissorStateIsDirty)
-        return;
-
     int modifiedScissorY = scissor.y;
     if (mCurPresentPathFastEnabled)
     {
@@ -672,17 +799,13 @@ void StateManager11::setScissorRectangle(const gl::Rectangle &scissor, bool enab
 
     mCurScissorRect      = scissor;
     mCurScissorEnabled   = enabled;
-    mScissorStateIsDirty = false;
 }
 
-void StateManager11::setViewport(const gl::Caps *caps,
-                                 const gl::Rectangle &viewport,
-                                 float zNear,
-                                 float zFar)
+void StateManager11::syncViewport(const gl::Caps *caps,
+                                  const gl::Rectangle &viewport,
+                                  float zNear,
+                                  float zFar)
 {
-    if (!mViewportStateIsDirty)
-        return;
-
     float actualZNear = gl::clamp01(zNear);
     float actualZFar  = gl::clamp01(zFar);
 
@@ -780,53 +903,124 @@ void StateManager11::setViewport(const gl::Caps *caps,
     mVertexConstants.viewScale[1] = mPixelConstants.viewScale[1];
     mVertexConstants.viewScale[2] = mPixelConstants.viewScale[2];
     mVertexConstants.viewScale[3] = mPixelConstants.viewScale[3];
-
-    mViewportStateIsDirty = false;
 }
 
-void StateManager11::invalidateRenderTarget()
+void StateManager11::invalidateRenderTarget(const gl::Context *context)
 {
-    mRenderTargetIsDirty = true;
+    mInternalDirtyBits.set(DIRTY_BIT_RENDER_TARGET);
+
+    // The D3D11 blend state is heavily dependent on the current render target.
+    mInternalDirtyBits.set(DIRTY_BIT_BLEND_STATE);
+
+    // nullptr only on display initialization.
+    if (!context)
+    {
+        return;
+    }
+
+    gl::Framebuffer *fbo = context->getGLState().getDrawFramebuffer();
+
+    // nullptr fbo can occur in some egl events like display initialization.
+    if (!fbo)
+    {
+        return;
+    }
+
+    // Disable the depth test/depth write if we are using a stencil-only attachment.
+    // This is because ANGLE emulates stencil-only with D24S8 on D3D11 - we should neither read
+    // nor write to the unused depth part of this emulated texture.
+    bool disableDepth = (!fbo->hasDepth() && fbo->hasStencil());
+
+    // Similarly we disable the stencil portion of the DS attachment if the app only binds depth.
+    bool disableStencil = (fbo->hasDepth() && !fbo->hasStencil());
+
+    if (!mCurDisableDepth.valid() || disableDepth != mCurDisableDepth.value() ||
+        !mCurDisableStencil.valid() || disableStencil != mCurDisableStencil.value())
+    {
+        mInternalDirtyBits.set(DIRTY_BIT_DEPTH_STENCIL_STATE);
+        mCurDisableDepth   = disableDepth;
+        mCurDisableStencil = disableStencil;
+    }
+
+    bool multiSample = (fbo->getCachedSamples(context) != 0);
+    if (multiSample != mCurRasterState.multiSample)
+    {
+        mInternalDirtyBits.set(DIRTY_BIT_RASTERIZER_STATE);
+        mCurRasterState.multiSample = multiSample;
+    }
+
+    checkPresentPath(context);
+
+    if (mRenderer->getRenderer11DeviceCaps().featureLevel <= D3D_FEATURE_LEVEL_9_3)
+    {
+        auto *firstAttachment = fbo->getFirstNonNullAttachment();
+        const auto &size      = firstAttachment->getSize();
+        if (mViewportBounds.width != size.width || mViewportBounds.height != size.height)
+        {
+            mViewportBounds = gl::Extents(size.width, size.height, 1);
+            mInternalDirtyBits.set(DIRTY_BIT_VIEWPORT_STATE);
+        }
+    }
 }
 
-void StateManager11::invalidateBoundViews()
+void StateManager11::invalidateBoundViews(const gl::Context *context)
 {
     mCurVertexSRVs.clear();
     mCurPixelSRVs.clear();
 
-    invalidateRenderTarget();
+    invalidateRenderTarget(context);
 }
 
-void StateManager11::invalidateEverything()
+void StateManager11::invalidateEverything(const gl::Context *context)
 {
-    mBlendStateIsDirty        = true;
-    mDepthStencilStateIsDirty = true;
-    mRasterizerStateIsDirty   = true;
-    mScissorStateIsDirty      = true;
-    mViewportStateIsDirty     = true;
+    mInternalDirtyBits.set();
 
     // We reset the current SRV data because it might not be in sync with D3D's state
     // anymore. For example when a currently used SRV is used as an RTV, D3D silently
     // remove it from its state.
-    invalidateBoundViews();
+    invalidateBoundViews(context);
+
+    // All calls to IASetInputLayout go through the state manager, so it shouldn't be
+    // necessary to invalidate the state.
+
+    // Invalidate the vertex buffer state.
+    invalidateVertexBuffer();
+
+    mCurrentPrimitiveTopology = D3D_PRIMITIVE_TOPOLOGY_UNDEFINED;
+
+    mAppliedVertexShader.dirty();
+    mAppliedGeometryShader.dirty();
+    mAppliedPixelShader.dirty();
+    mAppliedComputeShader.dirty();
+
+    std::fill(mForceSetVertexSamplerStates.begin(), mForceSetVertexSamplerStates.end(), true);
+    std::fill(mForceSetPixelSamplerStates.begin(), mForceSetPixelSamplerStates.end(), true);
+    std::fill(mForceSetComputeSamplerStates.begin(), mForceSetComputeSamplerStates.end(), true);
 }
 
-void StateManager11::setOneTimeRenderTarget(ID3D11RenderTargetView *renderTarget,
-                                            ID3D11DepthStencilView *depthStencil)
+void StateManager11::invalidateVertexBuffer()
 {
-    mRenderer->getDeviceContext()->OMSetRenderTargets(1, &renderTarget, depthStencil);
-    mRenderTargetIsDirty = true;
+    unsigned int limit = std::min<unsigned int>(mRenderer->getNativeCaps().maxVertexAttributes,
+                                                gl::MAX_VERTEX_ATTRIBS);
+    mDirtyVertexBufferRange = gl::RangeUI(0, limit);
+    mInputLayoutIsDirty     = true;
 }
 
-void StateManager11::setOneTimeRenderTargets(
-    const std::vector<ID3D11RenderTargetView *> &renderTargets,
-    ID3D11DepthStencilView *depthStencil)
+void StateManager11::setOneTimeRenderTarget(const gl::Context *context,
+                                            ID3D11RenderTargetView *rtv,
+                                            ID3D11DepthStencilView *dsv)
 {
-    UINT count               = static_cast<UINT>(renderTargets.size());
-    auto renderTargetPointer = (!renderTargets.empty() ? renderTargets.data() : nullptr);
+    mRenderer->getDeviceContext()->OMSetRenderTargets(1, &rtv, dsv);
+    invalidateRenderTarget(context);
+}
 
-    mRenderer->getDeviceContext()->OMSetRenderTargets(count, renderTargetPointer, depthStencil);
-    mRenderTargetIsDirty = true;
+void StateManager11::setOneTimeRenderTargets(const gl::Context *context,
+                                             ID3D11RenderTargetView **rtvs,
+                                             UINT numRtvs,
+                                             ID3D11DepthStencilView *dsv)
+{
+    mRenderer->getDeviceContext()->OMSetRenderTargets(numRtvs, (numRtvs > 0) ? rtvs : nullptr, dsv);
+    invalidateRenderTarget(context);
 }
 
 void StateManager11::onBeginQuery(Query11 *query)
@@ -839,9 +1033,9 @@ void StateManager11::onDeleteQueryObject(Query11 *query)
     mCurrentQueries.erase(query);
 }
 
-gl::Error StateManager11::onMakeCurrent(const gl::Data &data)
+gl::Error StateManager11::onMakeCurrent(const gl::Context *context)
 {
-    const gl::State &state = *data.state;
+    const gl::State &state = context->getGLState();
 
     for (Query11 *query : mCurrentQueries)
     {
@@ -860,7 +1054,7 @@ gl::Error StateManager11::onMakeCurrent(const gl::Data &data)
         }
     }
 
-    return gl::Error(GL_NO_ERROR);
+    return gl::NoError();
 }
 
 void StateManager11::setShaderResource(gl::SamplerType shaderType,
@@ -894,39 +1088,37 @@ gl::Error StateManager11::clearTextures(gl::SamplerType samplerType,
 {
     if (rangeStart == rangeEnd)
     {
-        return gl::Error(GL_NO_ERROR);
+        return gl::NoError();
     }
 
     auto &currentSRVs = (samplerType == gl::SAMPLER_VERTEX ? mCurVertexSRVs : mCurPixelSRVs);
 
-    gl::Range<size_t> clearRange(rangeStart, rangeStart);
-    clearRange.extend(std::min(rangeEnd, currentSRVs.highestUsed()));
-
+    gl::Range<size_t> clearRange(rangeStart, std::min(rangeEnd, currentSRVs.highestUsed()));
     if (clearRange.empty())
     {
-        return gl::Error(GL_NO_ERROR);
+        return gl::NoError();
     }
 
     auto deviceContext = mRenderer->getDeviceContext();
     if (samplerType == gl::SAMPLER_VERTEX)
     {
-        deviceContext->VSSetShaderResources(static_cast<unsigned int>(rangeStart),
-                                            static_cast<unsigned int>(rangeEnd - rangeStart),
+        deviceContext->VSSetShaderResources(static_cast<unsigned int>(clearRange.low()),
+                                            static_cast<unsigned int>(clearRange.length()),
                                             &mNullSRVs[0]);
     }
     else
     {
-        deviceContext->PSSetShaderResources(static_cast<unsigned int>(rangeStart),
-                                            static_cast<unsigned int>(rangeEnd - rangeStart),
+        deviceContext->PSSetShaderResources(static_cast<unsigned int>(clearRange.low()),
+                                            static_cast<unsigned int>(clearRange.length()),
                                             &mNullSRVs[0]);
     }
 
-    for (size_t samplerIndex = rangeStart; samplerIndex < rangeEnd; ++samplerIndex)
+    for (size_t samplerIndex : clearRange)
     {
         currentSRVs.update(samplerIndex, nullptr);
     }
 
-    return gl::Error(GL_NO_ERROR);
+    return gl::NoError();
 }
 
 void StateManager11::unsetConflictingSRVs(gl::SamplerType samplerType,
@@ -942,7 +1134,7 @@ void StateManager11::unsetConflictingSRVs(gl::SamplerType samplerType,
         if (record.srv && record.resource == resource &&
             ImageIndexConflictsWithSRV(index, record.desc))
         {
-            setShaderResource(samplerType, static_cast<UINT>(resourceIndex), NULL);
+            setShaderResource(samplerType, static_cast<UINT>(resourceIndex), nullptr);
         }
     }
 }
@@ -972,6 +1164,18 @@ void StateManager11::initialize(const gl::Caps &caps)
     mNullSRVs.resize(caps.maxTextureImageUnits, nullptr);
 
     mCurrentValueAttribs.resize(caps.maxVertexAttributes);
+
+    mForceSetVertexSamplerStates.resize(caps.maxVertexTextureImageUnits);
+    mForceSetPixelSamplerStates.resize(caps.maxTextureImageUnits);
+    mForceSetComputeSamplerStates.resize(caps.maxComputeTextureImageUnits);
+
+    mCurVertexSamplerStates.resize(caps.maxVertexTextureImageUnits);
+    mCurPixelSamplerStates.resize(caps.maxTextureImageUnits);
+    mCurComputeSamplerStates.resize(caps.maxComputeTextureImageUnits);
+
+    mSamplerMetadataVS.initData(caps.maxVertexTextureImageUnits);
+    mSamplerMetadataPS.initData(caps.maxTextureImageUnits);
+    mSamplerMetadataCS.initData(caps.maxComputeTextureImageUnits);
 }
 
 void StateManager11::deinitialize()
@@ -979,27 +1183,13 @@ void StateManager11::deinitialize()
     mCurrentValueAttribs.clear();
 }
 
-gl::Error StateManager11::syncFramebuffer(const gl::Framebuffer *framebuffer)
+gl::Error StateManager11::syncFramebuffer(const gl::Context *context, gl::Framebuffer *framebuffer)
 {
-    const Framebuffer11 *framebuffer11 = GetImplAs<Framebuffer11>(framebuffer);
-    gl::Error error = framebuffer11->invalidateSwizzles();
-    if (error.isError())
-    {
-        return error;
-    }
+    Framebuffer11 *framebuffer11 = GetImplAs<Framebuffer11>(framebuffer);
 
-    if (framebuffer11->hasAnyInternalDirtyBit())
-    {
-        ASSERT(framebuffer->id() != 0);
-        framebuffer11->syncInternalState();
-    }
-
-    if (!mRenderTargetIsDirty)
-    {
-        return gl::Error(GL_NO_ERROR);
-    }
-
-    mRenderTargetIsDirty = false;
+    // Applies the render target surface, depth stencil surface, viewport rectangle and
+    // scissor rectangle to the renderer
+    ASSERT(framebuffer && !framebuffer->hasAnyDirtyBit() && framebuffer->cachedComplete());
 
     // Check for zero-sized default framebuffer, which is a special case.
     // in this case we do not wish to modify any state and just silently return false.
@@ -1010,52 +1200,43 @@ gl::Error StateManager11::syncFramebuffer(const gl::Framebuffer *framebuffer)
         const gl::Extents &size = framebuffer->getFirstColorbuffer()->getSize();
         if (size.width == 0 || size.height == 0)
         {
-            return gl::Error(GL_NO_ERROR);
+            return gl::NoError();
         }
     }
 
-    // Get the color render buffer and serial
-    // Also extract the render target dimensions and view
-    unsigned int renderTargetWidth  = 0;
-    unsigned int renderTargetHeight = 0;
-    RTVArray framebufferRTVs;
-    bool missingColorRenderTarget = true;
-
-    framebufferRTVs.fill(nullptr);
+    RTVArray framebufferRTVs = {{}};
 
     const auto &colorRTs = framebuffer11->getCachedColorRenderTargets();
 
     size_t appliedRTIndex  = 0;
     bool skipInactiveRTs   = mRenderer->getWorkarounds().mrtPerfWorkaround;
     const auto &drawStates = framebuffer->getDrawBufferStates();
+    gl::DrawBufferMask activeProgramOutputs =
+        context->getContextState().getState().getProgram()->getActiveOutputVariables();
+    UINT maxExistingRT     = 0;
 
     for (size_t rtIndex = 0; rtIndex < colorRTs.size(); ++rtIndex)
     {
         const RenderTarget11 *renderTarget = colorRTs[rtIndex];
 
         // Skip inactive rendertargets if the workaround is enabled.
-        if (skipInactiveRTs && (!renderTarget || drawStates[rtIndex] == GL_NONE))
+        if (skipInactiveRTs &&
+            (!renderTarget || drawStates[rtIndex] == GL_NONE || !activeProgramOutputs[rtIndex]))
         {
             continue;
         }
 
         if (renderTarget)
         {
-            framebufferRTVs[appliedRTIndex] = renderTarget->getRenderTargetView();
+            framebufferRTVs[appliedRTIndex] = renderTarget->getRenderTargetView().get();
             ASSERT(framebufferRTVs[appliedRTIndex]);
-
-            if (missingColorRenderTarget)
-            {
-                renderTargetWidth        = renderTarget->getWidth();
-                renderTargetHeight       = renderTarget->getHeight();
-                missingColorRenderTarget = false;
-            }
+            maxExistingRT = static_cast<UINT>(appliedRTIndex) + 1;
         }
 
         // Unset conflicting texture SRVs
         const auto *attachment = framebuffer->getColorbuffer(rtIndex);
         ASSERT(attachment);
-        unsetConflictingAttachmentResources(attachment, renderTarget->getTexture());
+        unsetConflictingAttachmentResources(attachment, renderTarget->getTexture().get());
 
         appliedRTIndex++;
     }
@@ -1065,36 +1246,542 @@ gl::Error StateManager11::syncFramebuffer(const gl::Framebuffer *framebuffer)
     const auto *depthStencilRenderTarget = framebuffer11->getCachedDepthStencilRenderTarget();
     if (depthStencilRenderTarget)
     {
-        framebufferDSV = depthStencilRenderTarget->getDepthStencilView();
+        framebufferDSV = depthStencilRenderTarget->getDepthStencilView().get();
         ASSERT(framebufferDSV);
-
-        // If there is no render buffer, the width, height and format values come from
-        // the depth stencil
-        if (missingColorRenderTarget)
-        {
-            renderTargetWidth  = depthStencilRenderTarget->getWidth();
-            renderTargetHeight = depthStencilRenderTarget->getHeight();
-        }
 
         // Unset conflicting texture SRVs
         const auto *attachment = framebuffer->getDepthOrStencilbuffer();
         ASSERT(attachment);
-        unsetConflictingAttachmentResources(attachment, depthStencilRenderTarget->getTexture());
+        unsetConflictingAttachmentResources(attachment,
+                                            depthStencilRenderTarget->getTexture().get());
     }
 
     // TODO(jmadill): Use context caps?
-    UINT drawBuffers = mRenderer->getRendererCaps().maxDrawBuffers;
+    ASSERT(maxExistingRT <= static_cast<UINT>(mRenderer->getNativeCaps().maxDrawBuffers));
 
     // Apply the render target and depth stencil
-    mRenderer->getDeviceContext()->OMSetRenderTargets(drawBuffers, framebufferRTVs.data(),
+    mRenderer->getDeviceContext()->OMSetRenderTargets(maxExistingRT, framebufferRTVs.data(),
                                                       framebufferDSV);
 
-    // The D3D11 blend state is heavily dependent on the current render target.
-    mBlendStateIsDirty = true;
+    return gl::NoError();
+}
 
-    setViewportBounds(renderTargetWidth, renderTargetHeight);
+gl::Error StateManager11::updateCurrentValueAttribs(const gl::State &state,
+                                                    VertexDataManager *vertexDataManager)
+{
+    const auto &activeAttribsMask  = state.getProgram()->getActiveAttribLocationsMask();
+    const auto &dirtyActiveAttribs = (activeAttribsMask & mDirtyCurrentValueAttribs);
+    const auto &vertexAttributes   = state.getVertexArray()->getVertexAttributes();
+    const auto &vertexBindings     = state.getVertexArray()->getVertexBindings();
 
-    return gl::Error(GL_NO_ERROR);
+    for (auto attribIndex : dirtyActiveAttribs)
+    {
+        if (vertexAttributes[attribIndex].enabled)
+            continue;
+
+        mDirtyCurrentValueAttribs.reset(attribIndex);
+
+        const auto *attrib                   = &vertexAttributes[attribIndex];
+        const auto &currentValue             = state.getVertexAttribCurrentValue(attribIndex);
+        auto currentValueAttrib              = &mCurrentValueAttribs[attribIndex];
+        currentValueAttrib->currentValueType = currentValue.Type;
+        currentValueAttrib->attribute        = attrib;
+        currentValueAttrib->binding          = &vertexBindings[attrib->bindingIndex];
+
+        ANGLE_TRY(vertexDataManager->storeCurrentValue(currentValue, currentValueAttrib,
+                                                       static_cast<size_t>(attribIndex)));
+    }
+
+    return gl::NoError();
+}
+
+const std::vector<TranslatedAttribute> &StateManager11::getCurrentValueAttribs() const
+{
+    return mCurrentValueAttribs;
+}
+
+void StateManager11::setInputLayout(const d3d11::InputLayout *inputLayout)
+{
+    ID3D11DeviceContext *deviceContext = mRenderer->getDeviceContext();
+    if (inputLayout == nullptr)
+    {
+        if (mCurrentInputLayout != 0)
+        {
+            deviceContext->IASetInputLayout(nullptr);
+            mCurrentInputLayout = 0;
+        }
+    }
+    else if (inputLayout->getSerial() != mCurrentInputLayout)
+    {
+        deviceContext->IASetInputLayout(inputLayout->get());
+        mCurrentInputLayout = inputLayout->getSerial();
+    }
+}
+
+bool StateManager11::queueVertexBufferChange(size_t bufferIndex,
+                                             ID3D11Buffer *buffer,
+                                             UINT stride,
+                                             UINT offset)
+{
+    if (buffer != mCurrentVertexBuffers[bufferIndex] ||
+        stride != mCurrentVertexStrides[bufferIndex] ||
+        offset != mCurrentVertexOffsets[bufferIndex])
+    {
+        mDirtyVertexBufferRange.extend(static_cast<unsigned int>(bufferIndex));
+
+        mCurrentVertexBuffers[bufferIndex] = buffer;
+        mCurrentVertexStrides[bufferIndex] = stride;
+        mCurrentVertexOffsets[bufferIndex] = offset;
+        return true;
+    }
+
+    return false;
+}
+
+bool StateManager11::queueVertexOffsetChange(size_t bufferIndex, UINT offsetOnly)
+{
+    if (offsetOnly != mCurrentVertexOffsets[bufferIndex])
+    {
+        mDirtyVertexBufferRange.extend(static_cast<unsigned int>(bufferIndex));
+        mCurrentVertexOffsets[bufferIndex] = offsetOnly;
+        return true;
+    }
+    return false;
+}
+
+void StateManager11::applyVertexBufferChanges()
+{
+    if (mDirtyVertexBufferRange.empty())
+    {
+        return;
+    }
+
+    ASSERT(mDirtyVertexBufferRange.high() <= gl::MAX_VERTEX_ATTRIBS);
+
+    UINT start = static_cast<UINT>(mDirtyVertexBufferRange.low());
+
+    ID3D11DeviceContext *deviceContext = mRenderer->getDeviceContext();
+    deviceContext->IASetVertexBuffers(start, static_cast<UINT>(mDirtyVertexBufferRange.length()),
+                                      &mCurrentVertexBuffers[start], &mCurrentVertexStrides[start],
+                                      &mCurrentVertexOffsets[start]);
+
+    mDirtyVertexBufferRange = gl::RangeUI(gl::MAX_VERTEX_ATTRIBS, 0);
+}
+
+void StateManager11::setSingleVertexBuffer(const d3d11::Buffer *buffer, UINT stride, UINT offset)
+{
+    ID3D11Buffer *native = buffer ? buffer->get() : nullptr;
+    if (queueVertexBufferChange(0, native, stride, offset))
+    {
+        applyVertexBufferChanges();
+    }
+}
+
+gl::Error StateManager11::updateState(const gl::Context *context, GLenum drawMode)
+{
+    const auto &glState = context->getGLState();
+
+    // TODO(jmadill): Use dirty bits.
+    ANGLE_TRY(syncProgram(context, drawMode));
+
+    gl::Framebuffer *framebuffer = glState.getDrawFramebuffer();
+    Framebuffer11 *framebuffer11 = GetImplAs<Framebuffer11>(framebuffer);
+    ANGLE_TRY(framebuffer11->markAttachmentsDirty(context));
+
+    if (framebuffer11->hasAnyInternalDirtyBit())
+    {
+        ASSERT(framebuffer->id() != 0);
+        framebuffer11->syncInternalState(context);
+    }
+
+    bool pointDrawMode = (drawMode == GL_POINTS);
+    if (pointDrawMode != mCurRasterState.pointDrawMode)
+    {
+        mInternalDirtyBits.set(DIRTY_BIT_RASTERIZER_STATE);
+    }
+
+    // TODO(jmadill): This can be recomputed only on framebuffer changes.
+    RenderTarget11 *firstRT = framebuffer11->getFirstRenderTarget();
+    int samples             = (firstRT ? firstRT->getSamples() : 0);
+    unsigned int sampleMask = GetBlendSampleMask(glState, samples);
+    if (sampleMask != mCurSampleMask)
+    {
+        mInternalDirtyBits.set(DIRTY_BIT_BLEND_STATE);
+    }
+
+    auto dirtyBitsCopy = mInternalDirtyBits;
+    mInternalDirtyBits.reset();
+
+    for (auto dirtyBit : dirtyBitsCopy)
+    {
+        switch (dirtyBit)
+        {
+            case DIRTY_BIT_RENDER_TARGET:
+                ANGLE_TRY(syncFramebuffer(context, framebuffer));
+                break;
+            case DIRTY_BIT_VIEWPORT_STATE:
+                syncViewport(&context->getCaps(), glState.getViewport(), glState.getNearPlane(),
+                             glState.getFarPlane());
+                break;
+            case DIRTY_BIT_SCISSOR_STATE:
+                syncScissorRectangle(glState.getScissor(), glState.isScissorTestEnabled());
+                break;
+            case DIRTY_BIT_RASTERIZER_STATE:
+                ANGLE_TRY(syncRasterizerState(context, pointDrawMode));
+                break;
+            case DIRTY_BIT_BLEND_STATE:
+                ANGLE_TRY(syncBlendState(context, framebuffer, glState.getBlendState(),
+                                         glState.getBlendColor(), sampleMask));
+                break;
+            case DIRTY_BIT_DEPTH_STENCIL_STATE:
+                ANGLE_TRY(syncDepthStencilState(glState));
+                break;
+            default:
+                UNREACHABLE();
+                break;
+        }
+    }
+
+    // TODO(jmadill): Use dirty bits.
+    ANGLE_TRY(syncTextures(context));
+
+    // This must happen after viewport sync, because the viewport affects builtin uniforms.
+    // TODO(jmadill): Use dirty bits.
+    auto *programD3D = GetImplAs<ProgramD3D>(glState.getProgram());
+    ANGLE_TRY(programD3D->applyUniforms(drawMode));
+
+    // Check that we haven't set any dirty bits in the flushing of the dirty bits loop.
+    ASSERT(mInternalDirtyBits.none());
+
+    return gl::NoError();
+}
+
+void StateManager11::setPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY primitiveTopology)
+{
+    if (primitiveTopology != mCurrentPrimitiveTopology)
+    {
+        mRenderer->getDeviceContext()->IASetPrimitiveTopology(primitiveTopology);
+        mCurrentPrimitiveTopology = primitiveTopology;
+    }
+}
+
+void StateManager11::setDrawShaders(const d3d11::VertexShader *vertexShader,
+                                    const d3d11::GeometryShader *geometryShader,
+                                    const d3d11::PixelShader *pixelShader)
+{
+    setVertexShader(vertexShader);
+    setGeometryShader(geometryShader);
+    setPixelShader(pixelShader);
+}
+
+void StateManager11::setVertexShader(const d3d11::VertexShader *shader)
+{
+    ResourceSerial serial = shader ? shader->getSerial() : 0;
+
+    if (serial != mAppliedVertexShader)
+    {
+        ID3D11VertexShader *appliedShader = shader ? shader->get() : nullptr;
+        mRenderer->getDeviceContext()->VSSetShader(appliedShader, nullptr, 0);
+        mAppliedVertexShader = serial;
+    }
+}
+
+void StateManager11::setGeometryShader(const d3d11::GeometryShader *shader)
+{
+    ResourceSerial serial = shader ? shader->getSerial() : 0;
+
+    if (serial != mAppliedGeometryShader)
+    {
+        ID3D11GeometryShader *appliedShader = shader ? shader->get() : nullptr;
+        mRenderer->getDeviceContext()->GSSetShader(appliedShader, nullptr, 0);
+        mAppliedGeometryShader = serial;
+    }
+}
+
+void StateManager11::setPixelShader(const d3d11::PixelShader *shader)
+{
+    ResourceSerial serial = shader ? shader->getSerial() : 0;
+
+    if (serial != mAppliedPixelShader)
+    {
+        ID3D11PixelShader *appliedShader = shader ? shader->get() : nullptr;
+        mRenderer->getDeviceContext()->PSSetShader(appliedShader, nullptr, 0);
+        mAppliedPixelShader = serial;
+    }
+}
+
+void StateManager11::setComputeShader(const d3d11::ComputeShader *shader)
+{
+    ResourceSerial serial = shader ? shader->getSerial() : 0;
+
+    if (serial != mAppliedComputeShader)
+    {
+        ID3D11ComputeShader *appliedShader = shader ? shader->get() : nullptr;
+        mRenderer->getDeviceContext()->CSSetShader(appliedShader, nullptr, 0);
+        mAppliedComputeShader = serial;
+    }
+}
+
+// For each Direct3D sampler of either the pixel or vertex stage,
+// looks up the corresponding OpenGL texture image unit and texture type,
+// and sets the texture and its addressing/filtering state (or NULL when inactive).
+// Sampler mapping needs to be up-to-date on the program object before this is called.
+gl::Error StateManager11::applyTextures(const gl::Context *context,
+                                        gl::SamplerType shaderType,
+                                        const FramebufferTextureArray &framebufferTextures,
+                                        size_t framebufferTextureCount)
+{
+    const auto &glState    = context->getGLState();
+    const auto &caps       = context->getCaps();
+    ProgramD3D *programD3D = GetImplAs<ProgramD3D>(glState.getProgram());
+
+    ASSERT(!programD3D->isSamplerMappingDirty());
+
+    // TODO(jmadill): Use the Program's sampler bindings.
+
+    unsigned int samplerRange = programD3D->getUsedSamplerRange(shaderType);
+    for (unsigned int samplerIndex = 0; samplerIndex < samplerRange; samplerIndex++)
+    {
+        GLenum textureType = programD3D->getSamplerTextureType(shaderType, samplerIndex);
+        GLint textureUnit  = programD3D->getSamplerMapping(shaderType, samplerIndex, caps);
+        if (textureUnit != -1)
+        {
+            gl::Texture *texture = glState.getSamplerTexture(textureUnit, textureType);
+            ASSERT(texture);
+
+            gl::Sampler *samplerObject = glState.getSampler(textureUnit);
+
+            const gl::SamplerState &samplerState =
+                samplerObject ? samplerObject->getSamplerState() : texture->getSamplerState();
+
+            // TODO: std::binary_search may become unavailable using older versions of GCC
+            if (texture->getTextureState().isSamplerComplete(samplerState,
+                                                             context->getContextState()) &&
+                !std::binary_search(framebufferTextures.begin(),
+                                    framebufferTextures.begin() + framebufferTextureCount, texture))
+            {
+                ANGLE_TRY(
+                    setSamplerState(context, shaderType, samplerIndex, texture, samplerState));
+                ANGLE_TRY(setTexture(context, shaderType, samplerIndex, texture));
+            }
+            else
+            {
+                // Texture is not sampler complete or it is in use by the framebuffer.  Bind the
+                // incomplete texture.
+                gl::Texture *incompleteTexture =
+                    mRenderer->getIncompleteTexture(context, textureType);
+
+                ANGLE_TRY(setSamplerState(context, shaderType, samplerIndex, incompleteTexture,
+                                          incompleteTexture->getSamplerState()));
+                ANGLE_TRY(setTexture(context, shaderType, samplerIndex, incompleteTexture));
+            }
+        }
+        else
+        {
+            // No texture bound to this slot even though it is used by the shader, bind a NULL
+            // texture
+            ANGLE_TRY(setTexture(context, shaderType, samplerIndex, nullptr));
+        }
+    }
+
+    // Set all the remaining textures to NULL
+    size_t samplerCount = (shaderType == gl::SAMPLER_PIXEL) ? caps.maxTextureImageUnits
+                                                            : caps.maxVertexTextureImageUnits;
+    clearTextures(shaderType, samplerRange, samplerCount);
+
+    return gl::NoError();
+}
+
+gl::Error StateManager11::syncTextures(const gl::Context *context)
+{
+    FramebufferTextureArray framebufferTextures;
+    size_t framebufferSerialCount =
+        mRenderer->getBoundFramebufferTextures(context->getContextState(), &framebufferTextures);
+
+    ANGLE_TRY(
+        applyTextures(context, gl::SAMPLER_VERTEX, framebufferTextures, framebufferSerialCount));
+    ANGLE_TRY(
+        applyTextures(context, gl::SAMPLER_PIXEL, framebufferTextures, framebufferSerialCount));
+    return gl::NoError();
+}
+
+gl::Error StateManager11::setSamplerState(const gl::Context *context,
+                                          gl::SamplerType type,
+                                          int index,
+                                          gl::Texture *texture,
+                                          const gl::SamplerState &samplerState)
+{
+#if !defined(NDEBUG)
+    // Storage should exist, texture should be complete. Only verified in Debug.
+    TextureD3D *textureD3D  = GetImplAs<TextureD3D>(texture);
+    TextureStorage *storage = nullptr;
+    ANGLE_TRY(textureD3D->getNativeTexture(context, &storage));
+    ASSERT(storage);
+#endif  // !defined(NDEBUG)
+
+    // Sampler metadata that's passed to shaders in uniforms is stored separately from rest of the
+    // sampler state since having it in contiguous memory makes it possible to memcpy to a constant
+    // buffer, and it doesn't affect the state set by PSSetSamplers/VSSetSamplers.
+    SamplerMetadata11 *metadata = nullptr;
+
+    auto *deviceContext = mRenderer->getDeviceContext();
+
+    if (type == gl::SAMPLER_PIXEL)
+    {
+        ASSERT(static_cast<unsigned int>(index) < mRenderer->getNativeCaps().maxTextureImageUnits);
+
+        if (mForceSetPixelSamplerStates[index] ||
+            memcmp(&samplerState, &mCurPixelSamplerStates[index], sizeof(gl::SamplerState)) != 0)
+        {
+            ID3D11SamplerState *dxSamplerState = nullptr;
+            ANGLE_TRY(mRenderer->getSamplerState(samplerState, &dxSamplerState));
+
+            ASSERT(dxSamplerState != nullptr);
+            deviceContext->PSSetSamplers(index, 1, &dxSamplerState);
+
+            mCurPixelSamplerStates[index] = samplerState;
+        }
+
+        mForceSetPixelSamplerStates[index] = false;
+
+        metadata = &mSamplerMetadataPS;
+    }
+    else if (type == gl::SAMPLER_VERTEX)
+    {
+        ASSERT(static_cast<unsigned int>(index) <
+               mRenderer->getNativeCaps().maxVertexTextureImageUnits);
+
+        if (mForceSetVertexSamplerStates[index] ||
+            memcmp(&samplerState, &mCurVertexSamplerStates[index], sizeof(gl::SamplerState)) != 0)
+        {
+            ID3D11SamplerState *dxSamplerState = nullptr;
+            ANGLE_TRY(mRenderer->getSamplerState(samplerState, &dxSamplerState));
+
+            ASSERT(dxSamplerState != nullptr);
+            deviceContext->VSSetSamplers(index, 1, &dxSamplerState);
+
+            mCurVertexSamplerStates[index] = samplerState;
+        }
+
+        mForceSetVertexSamplerStates[index] = false;
+
+        metadata = &mSamplerMetadataVS;
+    }
+    else if (type == gl::SAMPLER_COMPUTE)
+    {
+        ASSERT(static_cast<unsigned int>(index) <
+               mRenderer->getNativeCaps().maxComputeTextureImageUnits);
+
+        if (mForceSetComputeSamplerStates[index] ||
+            memcmp(&samplerState, &mCurComputeSamplerStates[index], sizeof(gl::SamplerState)) != 0)
+        {
+            ID3D11SamplerState *dxSamplerState = nullptr;
+            ANGLE_TRY(mRenderer->getSamplerState(samplerState, &dxSamplerState));
+
+            ASSERT(dxSamplerState != nullptr);
+            deviceContext->CSSetSamplers(index, 1, &dxSamplerState);
+
+            mCurComputeSamplerStates[index] = samplerState;
+        }
+
+        mForceSetComputeSamplerStates[index] = false;
+
+        metadata = &mSamplerMetadataCS;
+    }
+    else
+        UNREACHABLE();
+
+    ASSERT(metadata != nullptr);
+    metadata->update(index, *texture);
+
+    return gl::NoError();
+}
+
+gl::Error StateManager11::setTexture(const gl::Context *context,
+                                     gl::SamplerType type,
+                                     int index,
+                                     gl::Texture *texture)
+{
+    const d3d11::SharedSRV *textureSRV = nullptr;
+
+    if (texture)
+    {
+        TextureD3D *textureImpl = GetImplAs<TextureD3D>(texture);
+
+        TextureStorage *texStorage = nullptr;
+        ANGLE_TRY(textureImpl->getNativeTexture(context, &texStorage));
+
+        // Texture should be complete and have a storage
+        ASSERT(texStorage);
+
+        TextureStorage11 *storage11 = GetAs<TextureStorage11>(texStorage);
+
+        ANGLE_TRY(storage11->getSRV(context, texture->getTextureState(), &textureSRV));
+
+        // If we get an invalid SRV here, something went wrong in the texture class and we're
+        // unexpectedly missing the shader resource view.
+        ASSERT(textureSRV->valid());
+
+        textureImpl->resetDirty();
+    }
+
+    ASSERT(
+        (type == gl::SAMPLER_PIXEL &&
+         static_cast<unsigned int>(index) < mRenderer->getNativeCaps().maxTextureImageUnits) ||
+        (type == gl::SAMPLER_VERTEX &&
+         static_cast<unsigned int>(index) < mRenderer->getNativeCaps().maxVertexTextureImageUnits));
+
+    setShaderResource(type, index, textureSRV->get());
+    return gl::NoError();
+}
+
+gl::Error StateManager11::syncProgram(const gl::Context *context, GLenum drawMode)
+{
+    const auto &glState = context->getGLState();
+    const auto *va11    = GetImplAs<VertexArray11>(glState.getVertexArray());
+    auto *programD3D    = GetImplAs<ProgramD3D>(glState.getProgram());
+
+    programD3D->updateCachedInputLayout(va11->getCurrentStateSerial(), glState);
+
+    // Binaries must be compiled before the sync.
+    ASSERT(programD3D->hasVertexExecutableForCachedInputLayout());
+    ASSERT(programD3D->hasGeometryExecutableForPrimitiveType(drawMode));
+    ASSERT(programD3D->hasPixelExecutableForCachedOutputLayout());
+
+    ShaderExecutableD3D *vertexExe = nullptr;
+    ANGLE_TRY(programD3D->getVertexExecutableForCachedInputLayout(&vertexExe, nullptr));
+
+    ShaderExecutableD3D *pixelExe = nullptr;
+    ANGLE_TRY(programD3D->getPixelExecutableForCachedOutputLayout(&pixelExe, nullptr));
+
+    ShaderExecutableD3D *geometryExe = nullptr;
+    ANGLE_TRY(programD3D->getGeometryExecutableForPrimitiveType(context->getContextState(),
+                                                                drawMode, &geometryExe, nullptr));
+
+    const d3d11::VertexShader *vertexShader =
+        (vertexExe ? &GetAs<ShaderExecutable11>(vertexExe)->getVertexShader() : nullptr);
+
+    // Skip pixel shader if we're doing rasterizer discard.
+    const d3d11::PixelShader *pixelShader = nullptr;
+    if (!glState.getRasterizerState().rasterizerDiscard)
+    {
+        pixelShader = (pixelExe ? &GetAs<ShaderExecutable11>(pixelExe)->getPixelShader() : nullptr);
+    }
+
+    const d3d11::GeometryShader *geometryShader = nullptr;
+    if (glState.isTransformFeedbackActiveUnpaused())
+    {
+        geometryShader =
+            (vertexExe ? &GetAs<ShaderExecutable11>(vertexExe)->getStreamOutShader() : nullptr);
+    }
+    else
+    {
+        geometryShader =
+            (geometryExe ? &GetAs<ShaderExecutable11>(geometryExe)->getGeometryShader() : nullptr);
+    }
+
+    setDrawShaders(vertexShader, geometryShader, pixelShader);
+    return gl::NoError();
 }
 
 gl::Error StateManager11::updateCurrentValueAttribs(const gl::State &state,

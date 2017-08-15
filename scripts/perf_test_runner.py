@@ -19,12 +19,18 @@ base_path = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file_
 
 # You might have to re-order these to find the specific version you want.
 perftests_paths = [
+    os.path.join('src', 'tests', 'Release_x64'),
+    os.path.join('src', 'tests', 'Release_Win32'),
     os.path.join('out', 'Release_x64'),
     os.path.join('out', 'Release'),
-    os.path.join('build', 'Release_x64'),
-    os.path.join('build', 'Release_Win32')
+    os.path.join('gyp', 'Release_x64'),
+    os.path.join('gyp', 'Release_Win32')
 ]
 metric = 'score'
+
+binary_name = 'angle_perftests'
+if sys.platform == 'win32':
+    binary_name += '.exe'
 
 scores = []
 
@@ -63,19 +69,28 @@ def truncated_mean(data, n):
 def truncated_stddev(data, n):
     return pstdev(truncated_list(data, n))
 
-perftests_path = ""
+# Find most recent binary
+newest_binary = None
+newest_mtime = None
 
-# TODO(jmadill): Linux binaries
 for path in perftests_paths:
-    perftests_path = os.path.join(base_path, path, 'angle_perftests.exe')
-    if os.path.exists(perftests_path):
-        break
+    binary_path = os.path.join(base_path, path, binary_name)
+    if os.path.exists(binary_path):
+        binary_mtime = os.path.getmtime(binary_path)
+        if (newest_binary is None) or (binary_mtime > newest_mtime):
+            newest_binary = binary_path
+            newest_mtime = binary_mtime
 
-if not os.path.exists(perftests_path):
-    print("Cannot find angle_perftests.exe!")
+perftests_path = newest_binary
+
+if perftests_path == None or not os.path.exists(perftests_path):
+    print('Cannot find Release %s!' % binary_name)
     sys.exit(1)
 
-test_name = "DrawCallPerfBenchmark.Run/d3d11_null"
+if sys.platform == 'win32':
+    test_name = 'DrawCallPerfBenchmark.Run/d3d11_null'
+else:
+    test_name = 'DrawCallPerfBenchmark.Run/gl'
 
 if len(sys.argv) >= 2:
     test_name = sys.argv[1]

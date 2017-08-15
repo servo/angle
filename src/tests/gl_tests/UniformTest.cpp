@@ -5,6 +5,7 @@
 //
 
 #include "test_utils/ANGLETest.h"
+#include "test_utils/gl_raii.h"
 
 #include <array>
 #include <cmath>
@@ -459,6 +460,135 @@ TEST_P(UniformTestES3, TranposedMatrixArrayUniformStateQuery)
     }
 }
 
+// Check that trying setting too many elements of an array doesn't overflow
+TEST_P(UniformTestES3, OverflowArray)
+{
+    const std::string &vertexShader =
+        "#version 300 es\n"
+        "void main() { gl_Position = vec4(1); }";
+    const std::string &fragShader =
+        "#version 300 es\n"
+        "precision mediump float;\n"
+        "uniform float uniF[5];\n"
+        "uniform mat3x2 uniMat3x2[5];\n"
+        "out vec4 color;\n"
+        "void main() {\n"
+        "  color = vec4(uniMat3x2[0][0][0] + uniF[0]);\n"
+        "}";
+
+    mProgram = CompileProgram(vertexShader, fragShader);
+    ASSERT_NE(mProgram, 0u);
+
+    glUseProgram(mProgram);
+
+    const size_t kOverflowSize = 10000;
+    std::vector<GLfloat> values(10000 * 6);
+
+    // Setting as a clump
+    GLint floatLocation = glGetUniformLocation(mProgram, "uniF");
+    ASSERT_NE(-1, floatLocation);
+    GLint matLocation = glGetUniformLocation(mProgram, "uniMat3x2");
+    ASSERT_NE(-1, matLocation);
+
+    // Set too many float uniforms
+    glUniform1fv(floatLocation, kOverflowSize, &values[0]);
+
+    // Set too many matrix uniforms, transposed or not
+    glUniformMatrix3x2fv(matLocation, kOverflowSize, GL_FALSE, &values[0]);
+    glUniformMatrix3x2fv(matLocation, kOverflowSize, GL_TRUE, &values[0]);
+
+    // Same checks but with offsets
+    GLint floatLocationOffset = glGetUniformLocation(mProgram, "uniF[3]");
+    ASSERT_NE(-1, floatLocationOffset);
+    GLint matLocationOffset = glGetUniformLocation(mProgram, "uniMat3x2[3]");
+    ASSERT_NE(-1, matLocationOffset);
+
+    glUniform1fv(floatLocationOffset, kOverflowSize, &values[0]);
+    glUniformMatrix3x2fv(matLocationOffset, kOverflowSize, GL_FALSE, &values[0]);
+    glUniformMatrix3x2fv(matLocationOffset, kOverflowSize, GL_TRUE, &values[0]);
+}
+
+// Check setting a sampler uniform
+TEST_P(UniformTest, Sampler)
+{
+    const std::string &vertShader =
+        "uniform sampler2D tex2D;\n"
+        "void main() {\n"
+        "  gl_Position = vec4(0, 0, 0, 1);\n"
+        "}";
+
+    const std::string &fragShader =
+        "precision mediump float;\n"
+        "uniform sampler2D tex2D;\n"
+        "void main() {\n"
+        "  gl_FragColor = texture2D(tex2D, vec2(0, 0));\n"
+        "}";
+
+    ANGLE_GL_PROGRAM(program, vertShader, fragShader);
+
+    GLint location = glGetUniformLocation(program.get(), "tex2D");
+    ASSERT_NE(-1, location);
+
+    const GLint sampler[] = {0, 0, 0, 0};
+
+    // before UseProgram
+    glUniform1i(location, sampler[0]);
+    EXPECT_GL_ERROR(GL_INVALID_OPERATION);
+
+    glUseProgram(program.get());
+
+    // Uniform1i
+    glUniform1i(location, sampler[0]);
+    glUniform1iv(location, 1, sampler);
+    EXPECT_GL_NO_ERROR();
+
+    // Uniform{234}i
+    glUniform2i(location, sampler[0], sampler[0]);
+    EXPECT_GL_ERROR(GL_INVALID_OPERATION);
+    glUniform3i(location, sampler[0], sampler[0], sampler[0]);
+    EXPECT_GL_ERROR(GL_INVALID_OPERATION);
+    glUniform4i(location, sampler[0], sampler[0], sampler[0], sampler[0]);
+    EXPECT_GL_ERROR(GL_INVALID_OPERATION);
+    glUniform2iv(location, 1, sampler);
+    EXPECT_GL_ERROR(GL_INVALID_OPERATION);
+    glUniform3iv(location, 1, sampler);
+    EXPECT_GL_ERROR(GL_INVALID_OPERATION);
+    glUniform4iv(location, 1, sampler);
+    EXPECT_GL_ERROR(GL_INVALID_OPERATION);
+
+    // Uniform{1234}f
+    const GLfloat f[] = {0, 0, 0, 0};
+    glUniform1f(location, f[0]);
+    EXPECT_GL_ERROR(GL_INVALID_OPERATION);
+    glUniform2f(location, f[0], f[0]);
+    EXPECT_GL_ERROR(GL_INVALID_OPERATION);
+    glUniform3f(location, f[0], f[0], f[0]);
+    EXPECT_GL_ERROR(GL_INVALID_OPERATION);
+    glUniform4f(location, f[0], f[0], f[0], f[0]);
+    EXPECT_GL_ERROR(GL_INVALID_OPERATION);
+    glUniform1fv(location, 1, f);
+    EXPECT_GL_ERROR(GL_INVALID_OPERATION);
+    glUniform2fv(location, 1, f);
+    EXPECT_GL_ERROR(GL_INVALID_OPERATION);
+    glUniform3fv(location, 1, f);
+    EXPECT_GL_ERROR(GL_INVALID_OPERATION);
+    glUniform4fv(location, 1, f);
+    EXPECT_GL_ERROR(GL_INVALID_OPERATION);
+
+    // < 0 or >= max
+    GLint tooHigh;
+    glGetIntegerv(GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS, &tooHigh);
+    constexpr GLint tooLow[] = {-1};
+    glUniform1i(location, tooLow[0]);
+    EXPECT_GL_ERROR(GL_INVALID_VALUE);
+    glUniform1iv(location, 1, tooLow);
+    EXPECT_GL_ERROR(GL_INVALID_VALUE);
+    glUniform1i(location, tooHigh);
+    EXPECT_GL_ERROR(GL_INVALID_VALUE);
+    glUniform1iv(location, 1, &tooHigh);
+    EXPECT_GL_ERROR(GL_INVALID_VALUE);
+}
+
 // Check that sampler uniforms only show up one time in the list
 TEST_P(UniformTest, SamplerUniformsAppearOnce)
 {
@@ -564,7 +694,7 @@ TEST_P(UniformTestES3, ReturnsOnlyOneArrayElement)
     for (const auto &array : uniformArrays)
     {
         uniformStream << "uniform " << array.type << " " << array.name << "["
-                      << std::to_string(kArraySize) << "];\n";
+                      << ToString(kArraySize) << "];\n";
 
         // We need to make use of the uniforms or they get compiled out.
         for (int i = 0; i < 4; i++)
@@ -610,7 +740,7 @@ TEST_P(UniformTestES3, ReturnsOnlyOneArrayElement)
     {
         for (size_t index = 0; index < kArraySize; index++)
         {
-            std::string strIndex = "[" + std::to_string(index) + "]";
+            std::string strIndex = "[" + ToString(index) + "]";
             // Check all the different glGetUniformv functions
             CheckOneElement<float>(glGetUniformfv, mProgram, uniformArray.name + strIndex,
                                    uniformArray.components, 42.4242f);
@@ -622,6 +752,179 @@ TEST_P(UniformTestES3, ReturnsOnlyOneArrayElement)
     }
 }
 
+class UniformTestES31 : public ANGLETest
+{
+  protected:
+    UniformTestES31() : mProgram(0) {}
+
+    void SetUp() override { ANGLETest::SetUp(); }
+
+    void TearDown() override
+    {
+        if (mProgram != 0)
+        {
+            glDeleteProgram(mProgram);
+            mProgram = 0;
+        }
+    }
+
+    GLuint mProgram;
+};
+
+// Test that uniform locations get set correctly for structure members.
+// ESSL 3.10.4 section 4.4.3.
+TEST_P(UniformTestES31, StructLocationLayoutQualifier)
+{
+    const std::string &vertShader =
+        "#version 310 es\n"
+        "void main()\n"
+        "{\n"
+        "    gl_Position = vec4(0);\n"
+        "}";
+
+    const std::string &fragShader =
+        "#version 310 es\n"
+        "out highp vec4 my_FragColor;\n"
+        "struct S\n"
+        "{\n"
+        "    highp float f;\n"
+        "    highp float f2;\n"
+        "};\n"
+        "uniform layout(location=12) S uS;\n"
+        "void main()\n"
+        "{\n"
+        "    my_FragColor = vec4(uS.f, uS.f2, 0, 1);\n"
+        "}";
+
+    ANGLE_GL_PROGRAM(program, vertShader, fragShader);
+
+    EXPECT_EQ(12, glGetUniformLocation(program.get(), "uS.f"));
+    EXPECT_EQ(13, glGetUniformLocation(program.get(), "uS.f2"));
+}
+
+// Set uniform location with a layout qualifier in the fragment shader. The same uniform exists in
+// the vertex shader, but doesn't have a location specified there.
+TEST_P(UniformTestES31, UniformLocationInFragmentShader)
+{
+    const std::string &vertShader =
+        "#version 310 es\n"
+        "uniform highp sampler2D tex2D;\n"
+        "void main()\n"
+        "{\n"
+        "    gl_Position = texture(tex2D, vec2(0));\n"
+        "}";
+
+    const std::string &fragShader =
+        "#version 310 es\n"
+        "precision mediump float;\n"
+        "out vec4 my_FragColor;\n"
+        "uniform layout(location=12) highp sampler2D tex2D;\n"
+        "void main()\n"
+        "{\n"
+        "    my_FragColor = texture(tex2D, vec2(0));\n"
+        "}";
+
+    ANGLE_GL_PROGRAM(program, vertShader, fragShader);
+
+    EXPECT_EQ(12, glGetUniformLocation(program.get(), "tex2D"));
+}
+
+// Test two unused uniforms that have the same location.
+// ESSL 3.10.4 section 4.4.3: "No two default-block uniform variables in the program can have the
+// same location, even if they are unused, otherwise a compiler or linker error will be generated."
+TEST_P(UniformTestES31, UnusedUniformsConflictingLocation)
+{
+    const std::string &vertShader =
+        "#version 310 es\n"
+        "uniform layout(location=12) highp sampler2D texA;\n"
+        "void main()\n"
+        "{\n"
+        "    gl_Position = vec4(0);\n"
+        "}";
+
+    const std::string &fragShader =
+        "#version 310 es\n"
+        "out highp vec4 my_FragColor;\n"
+        "uniform layout(location=12) highp sampler2D texB;\n"
+        "void main()\n"
+        "{\n"
+        "    my_FragColor = vec4(0);\n"
+        "}";
+
+    mProgram = CompileProgram(vertShader, fragShader);
+    EXPECT_EQ(0u, mProgram);
+}
+
+// Test two unused uniforms that have overlapping locations once all array elements are taken into
+// account.
+// ESSL 3.10.4 section 4.4.3: "No two default-block uniform variables in the program can have the
+// same location, even if they are unused, otherwise a compiler or linker error will be generated."
+TEST_P(UniformTestES31, UnusedUniformArraysConflictingLocation)
+{
+    const std::string &vertShader =
+        "#version 310 es\n"
+        "uniform layout(location=11) highp vec4 uA[2];\n"
+        "void main()\n"
+        "{\n"
+        "    gl_Position = vec4(0);\n"
+        "}";
+
+    const std::string &fragShader =
+        "#version 310 es\n"
+        "out highp vec4 my_FragColor;\n"
+        "uniform layout(location=12) highp vec4 uB;\n"
+        "void main()\n"
+        "{\n"
+        "    my_FragColor = vec4(0);\n"
+        "}";
+
+    mProgram = CompileProgram(vertShader, fragShader);
+    EXPECT_EQ(0u, mProgram);
+}
+
+// Test a uniform struct containing a non-square matrix and a boolean.
+// Minimal test case for a bug revealed by dEQP tests.
+TEST_P(UniformTestES3, StructWithNonSquareMatrixAndBool)
+{
+    const std::string &vertShader =
+        "#version 300 es\n"
+        "precision highp float;\n"
+        "in highp vec4 a_position;\n"
+        "void main()\n"
+        "{\n"
+        "    gl_Position = a_position;\n"
+        "}\n";
+
+    const std::string &fragShader =
+        "#version 300 es\n"
+        "precision highp float;\n"
+        "out highp vec4 my_color;\n"
+        "struct S\n"
+        "{\n"
+        "    mat2x4 m;\n"
+        "    bool b;\n"
+        "};\n"
+        "uniform S uni;\n"
+        "void main()\n"
+        "{\n"
+        "    my_color = vec4(1.0);\n"
+        "    if (!uni.b) { my_color.g = 0.0; }"
+        "}\n";
+
+    ANGLE_GL_PROGRAM(program, vertShader, fragShader);
+
+    glUseProgram(program.get());
+
+    GLint location = glGetUniformLocation(program.get(), "uni.b");
+    ASSERT_NE(-1, location);
+    glUniform1i(location, 1);
+
+    drawQuad(program.get(), "a_position", 0.0f);
+
+    ASSERT_GL_NO_ERROR();
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::white);
+}
+
 // Use this to select which configurations (e.g. which renderer, which GLES major version) these tests should be run against.
 ANGLE_INSTANTIATE_TEST(UniformTest,
                        ES2_D3D9(),
@@ -630,5 +933,6 @@ ANGLE_INSTANTIATE_TEST(UniformTest,
                        ES2_OPENGL(),
                        ES2_OPENGLES());
 ANGLE_INSTANTIATE_TEST(UniformTestES3, ES3_D3D11(), ES3_OPENGL(), ES3_OPENGLES());
+ANGLE_INSTANTIATE_TEST(UniformTestES31, ES31_D3D11(), ES31_OPENGL(), ES31_OPENGLES());
 
 } // namespace

@@ -12,6 +12,7 @@
 #include <string>
 #include <vector>
 
+#include "common/Optional.h"
 #include "libANGLE/renderer/gl/DisplayGL.h"
 #include "libANGLE/renderer/gl/glx/FunctionsGLX.h"
 
@@ -37,29 +38,33 @@ struct SwapControlData
 class DisplayGLX : public DisplayGL
 {
   public:
-    DisplayGLX();
+    DisplayGLX(const egl::DisplayState &state);
     ~DisplayGLX() override;
 
     egl::Error initialize(egl::Display *display) override;
     void terminate() override;
 
-    SurfaceImpl *createWindowSurface(const egl::Config *configuration,
+    egl::Error makeCurrent(egl::Surface *drawSurface,
+                           egl::Surface *readSurface,
+                           gl::Context *context) override;
+
+    SurfaceImpl *createWindowSurface(const egl::SurfaceState &state,
                                      EGLNativeWindowType window,
                                      const egl::AttributeMap &attribs) override;
-    SurfaceImpl *createPbufferSurface(const egl::Config *configuration,
+    SurfaceImpl *createPbufferSurface(const egl::SurfaceState &state,
                                       const egl::AttributeMap &attribs) override;
-    SurfaceImpl *createPbufferFromClientBuffer(const egl::Config *configuration,
-                                               EGLClientBuffer shareHandle,
+    SurfaceImpl *createPbufferFromClientBuffer(const egl::SurfaceState &state,
+                                               EGLenum buftype,
+                                               EGLClientBuffer clientBuffer,
                                                const egl::AttributeMap &attribs) override;
-    SurfaceImpl *createPixmapSurface(const egl::Config *configuration,
+    SurfaceImpl *createPixmapSurface(const egl::SurfaceState &state,
                                      NativePixmapType nativePixmap,
                                      const egl::AttributeMap &attribs) override;
 
-    egl::ConfigSet generateConfigs() const override;
+    egl::ConfigSet generateConfigs() override;
 
-    bool isDeviceLost() const override;
     bool testDeviceLost() override;
-    egl::Error restoreLostDevice() override;
+    egl::Error restoreLostDevice(const egl::Display *display) override;
 
     bool isValidNativeWindow(EGLNativeWindowType window) const override;
 
@@ -67,12 +72,8 @@ class DisplayGLX : public DisplayGL
 
     std::string getVendorString() const override;
 
-    egl::Error waitClient() const override;
-    egl::Error waitNative(EGLint engine,
-                          egl::Surface *drawSurface,
-                          egl::Surface *readSurface) const override;
-
-    egl::Error getDriverVersion(std::string *version) const override;
+    egl::Error waitClient(const gl::Context *context) const override;
+    egl::Error waitNative(const gl::Context *context, EGLint engine) const override;
 
     // Synchronizes with the X server, if the display has been opened by ANGLE.
     // Calling this is required at the end of every functions that does buffered
@@ -98,18 +99,17 @@ class DisplayGLX : public DisplayGL
     void generateExtensions(egl::DisplayExtensions *outExtensions) const override;
     void generateCaps(egl::Caps *outCaps) const override;
 
+    egl::Error makeCurrentSurfaceless(gl::Context *context) override;
+
     int getGLXFBConfigAttrib(glx::FBConfig config, int attrib) const;
     egl::Error createContextAttribs(glx::FBConfig,
-                                    gl::Version version,
+                                    const Optional<gl::Version> &version,
                                     int profileMask,
                                     glx::Context *context) const;
 
-    egl::Error getNVIDIADriverVersion(std::string *version) const;
-
     FunctionsGL *mFunctionsGL;
 
-    //TODO(cwallez) yuck, change generateConfigs to be non-const or add a userdata member to egl::Config?
-    mutable std::map<int, glx::FBConfig> configIdToGLXConfig;
+    std::map<int, glx::FBConfig> configIdToGLXConfig;
 
     EGLint mRequestedVisual;
     glx::FBConfig mContextConfig;
@@ -122,6 +122,7 @@ class DisplayGLX : public DisplayGL
     bool mHasMultisample;
     bool mHasARBCreateContext;
     bool mHasARBCreateContextProfile;
+    bool mHasARBCreateContextRobustness;
     bool mHasEXTCreateContextES2Profile;
 
     enum class SwapControl
@@ -135,6 +136,8 @@ class DisplayGLX : public DisplayGL
     int mMinSwapInterval;
     int mMaxSwapInterval;
     int mCurrentSwapInterval;
+
+    glx::Drawable mCurrentDrawable;
 
     FunctionsGLX mGLX;
     Display *mXDisplay;

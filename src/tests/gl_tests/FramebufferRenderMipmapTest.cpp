@@ -78,7 +78,8 @@ class FramebufferRenderMipmapTest : public ANGLETest
 // when using a non-zero level in glFramebufferTexture2D.
 TEST_P(FramebufferRenderMipmapTest, Validation)
 {
-    bool renderToMipmapSupported = extensionEnabled("GL_OES_fbo_render_mipmap") || getClientVersion() > 2;
+    bool renderToMipmapSupported =
+        extensionEnabled("GL_OES_fbo_render_mipmap") || getClientMajorVersion() > 2;
 
     GLuint tex = 0;
     glGenTextures(1, &tex);
@@ -88,7 +89,7 @@ TEST_P(FramebufferRenderMipmapTest, Validation)
     for (GLint i = 0; i < levels; i++)
     {
         GLsizei size = 1 << ((levels - 1) - i);
-        glTexImage2D(GL_TEXTURE_2D, i, GL_RGBA, size, size, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+        glTexImage2D(GL_TEXTURE_2D, i, GL_RGBA, size, size, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
     }
 
     EXPECT_GL_NO_ERROR();
@@ -127,7 +128,8 @@ TEST_P(FramebufferRenderMipmapTest, RenderToMipmap)
         return;
     }
 
-    bool renderToMipmapSupported = extensionEnabled("GL_OES_fbo_render_mipmap") || getClientVersion() > 2;
+    bool renderToMipmapSupported =
+        extensionEnabled("GL_OES_fbo_render_mipmap") || getClientMajorVersion() > 2;
     if (!renderToMipmapSupported)
     {
         std::cout << "Test skipped because GL_OES_fbo_render_mipmap or ES3 is not available." << std::endl;
@@ -152,7 +154,7 @@ TEST_P(FramebufferRenderMipmapTest, RenderToMipmap)
     for (GLint i = 0; i < testLevels; i++)
     {
         GLsizei size = 1 << ((testLevels - 1) - i);
-        glTexImage2D(GL_TEXTURE_2D, i, GL_RGBA, size, size, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+        glTexImage2D(GL_TEXTURE_2D, i, GL_RGBA, size, size, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
     }
 
     EXPECT_GL_NO_ERROR();
