@@ -146,5 +146,12 @@ if(MSVC)
     -D_SCL_SECURE_NO_WARNINGS)
 endif()
 
+# __STDC_CONSTANT_MACROS is not defined when building for Android
+# on macOS and causes "UINT*_C not declared" C++ compiler errors.
+if ((${CMAKE_SYSTEM_NAME} STREQUAL "Android") AND
+    (${CMAKE_HOST_SYSTEM_NAME} STREQUAL "Darwin"))
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -D__STDC_CONSTANT_MACROS")
+endif()
+
 add_library(angle STATIC ${ANGLE_SOURCES})
 install(TARGETS angle ARCHIVE DESTINATION .)
