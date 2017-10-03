@@ -127,7 +127,9 @@ add_definitions(
 # DLL goop on Windows.
 #add_definitions(-DANGLE_EXPORT="")
 
-include_directories(include src src/common/third_party/base)
+find_package(X11)
+
+include_directories(include src src/common/third_party/base ${X11_INCLUDE_DIR})
 
 if(NOT WIN32 OR MINGW)
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=gnu++11")
