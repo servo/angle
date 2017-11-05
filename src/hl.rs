@@ -198,6 +198,7 @@ impl ShaderValidator {
                       SH_CLAMP_INDIRECT_ARRAY_BOUNDS |
                       SH_INIT_GL_POSITION |
                       SH_ENFORCE_PACKING_RESTRICTIONS |
+                      SH_LIMIT_EXPRESSION_COMPLEXITY |
                       SH_LIMIT_CALL_STACK_DEPTH;
 
         // Todo(Mortimer): Add SH_TIMING_RESTRICTIONS to options when the implementations gets better
