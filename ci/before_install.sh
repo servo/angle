@@ -3,7 +3,7 @@ set -ex
 # Workaround for Travis CI macOS bug (https://github.com/travis-ci/travis-ci/issues/6307)
 if [ "${TRAVIS_OS_NAME}" == "osx" ]; then
     command curl -sSL https://rvm.io/mpapis.asc | gpg --import -;
-    rvm get stable
+    rvm get head || true
 fi
 
 pushd ~
