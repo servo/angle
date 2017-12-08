@@ -3,7 +3,8 @@ pushd ~
 
 # Workaround for Travis CI macOS bug (https://github.com/travis-ci/travis-ci/issues/6307)
 if [ "${TRAVIS_OS_NAME}" == "osx" ]; then
-    rvm get head || true
+    command curl -sSL https://rvm.io/mpapis.asc | gpg --import -;
+    rvm get stable
 fi
 
 function llvm_download() {
