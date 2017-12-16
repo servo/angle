@@ -2,9 +2,9 @@ set -ex
 pushd ~
 
 # Workaround for Travis CI macOS bug (https://github.com/travis-ci/travis-ci/issues/6307)
-if [ "${TRAVIS_OS_NAME}" == "osx" ]; then
-    rvm get head || true
-fi
+#if [ "${TRAVIS_OS_NAME}" == "osx" ]; then
+#    rvm get head || true
+#fi
 
 function llvm_download() {
     export LLVM_VERSION_TRIPLE="3.9.0"
