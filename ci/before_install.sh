@@ -1,10 +1,12 @@
 set -ex
-pushd ~
 
 # Workaround for Travis CI macOS bug (https://github.com/travis-ci/travis-ci/issues/6307)
 if [ "${TRAVIS_OS_NAME}" == "osx" ]; then
+    command curl -sSL https://rvm.io/mpapis.asc | gpg --import -;
     rvm get head || true
 fi
+
+pushd ~
 
 function llvm_download() {
     export LLVM_VERSION_TRIPLE="3.9.0"
